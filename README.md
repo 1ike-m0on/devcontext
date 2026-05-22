@@ -7,13 +7,17 @@ and development knowledge into reusable context for AI-assisted coding.
 
 ## Current Status
 
-The project is at the initial engineering setup stage.
+The project has completed the MVP0 foundation branch.
 
 Implemented:
 
-- Spring Boot application skeleton
+- Spring Boot REST API on port `18080`
 - Health check API: `GET /api/health`
-- Basic package boundaries for domain, application, ports, adapters, run, and LLM integrations
+- SQLite local storage under `data/devcontext.sqlite`
+- Project registration and query APIs
+- Pluggable `ContextProvider` / `ContextItem` foundation
+- `LlmClient` port with a mock adapter
+- Traceable `AgentRun` / `AgentEvent` execution flow
 - Full planning documents under `docs/`
 
 ## Documentation
@@ -37,4 +41,14 @@ Health check:
 
 ```http
 GET http://localhost:18080/api/health
+```
+
+MVP0 smoke flow:
+
+```http
+POST http://localhost:18080/api/projects
+GET  http://localhost:18080/api/projects
+GET  http://localhost:18080/api/projects/{projectId}/context-items
+POST http://localhost:18080/api/agent-runs/mock-llm
+GET  http://localhost:18080/api/agent-runs/{runId}/events
 ```

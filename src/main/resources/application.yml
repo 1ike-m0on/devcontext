@@ -1,6 +1,13 @@
 spring:
   application:
     name: devcontext
+  datasource:
+    url: jdbc:sqlite:data/devcontext.sqlite
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
 
 server:
   port: 18080
