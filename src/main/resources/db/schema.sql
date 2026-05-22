@@ -69,3 +69,36 @@ CREATE TABLE IF NOT EXISTS context_document (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_context_document_project_path
 ON context_document (project_id, file_path);
+
+CREATE TABLE IF NOT EXISTS review_record (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    run_id INTEGER NOT NULL,
+    base_branch TEXT NOT NULL,
+    compare_branch TEXT NOT NULL,
+    diff_hash TEXT NOT NULL,
+    score REAL NOT NULL,
+    summary TEXT NOT NULL,
+    report_path TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS review_issue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    severity TEXT NOT NULL,
+    title TEXT NOT NULL,
+    file_path TEXT,
+    line_number INTEGER,
+    description TEXT,
+    impact TEXT,
+    suggestion TEXT,
+    confidence TEXT,
+    status TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_issue_review_id
+ON review_issue (review_id);

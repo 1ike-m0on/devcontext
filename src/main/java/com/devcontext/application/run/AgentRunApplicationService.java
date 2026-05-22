@@ -64,6 +64,28 @@ public class AgentRunApplicationService {
         return saved;
     }
 
+    public AgentRun failRun(AgentRun run, String errorMessage) {
+        Instant finishedAt = Instant.now();
+        long durationMs = Duration.between(run.createdAt(), finishedAt).toMillis();
+        AgentRun failed = new AgentRun(
+                run.id(),
+                run.projectId(),
+                run.runType(),
+                "failed",
+                run.modelName(),
+                run.promptVersion(),
+                run.inputTokenEstimate(),
+                run.outputTokenEstimate(),
+                durationMs,
+                errorMessage,
+                run.createdAt(),
+                finishedAt
+        );
+        AgentRun saved = runRepository.update(failed);
+        recordEvent(saved.id(), "RUN_FINISHED", saved.runType(), "Run failed", "failed", durationMs, errorMessage);
+        return saved;
+    }
+
     public AgentEvent recordEvent(Long runId, String eventType, String inputSummary, String outputSummary, String status, Long durationMs, String errorMessage) {
         AgentEvent event = new AgentEvent(
                 null,
@@ -89,4 +111,3 @@ public class AgentRunApplicationService {
         return eventRepository.findByRunId(runId);
     }
 }
-
