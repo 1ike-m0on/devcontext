@@ -1,0 +1,28 @@
+# Build outputs
+target/
+build/
+out/
+
+# Runtime data
+data/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Local config and secrets
+.env
+*.local
+application-local.yml
+application-local.yaml
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
