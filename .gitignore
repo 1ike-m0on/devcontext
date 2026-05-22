@@ -11,6 +11,10 @@ logs/
 *.sqlite
 *.sqlite3
 
+# Generated AI context assets
+.ai/
+AGENTS.md
+
 # Local config and secrets
 .env
 *.local
@@ -25,4 +29,3 @@ application-local.yaml
 # OS files
 .DS_Store
 Thumbs.db
-

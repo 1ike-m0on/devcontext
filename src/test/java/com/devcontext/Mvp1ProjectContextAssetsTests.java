@@ -66,10 +66,16 @@ class Mvp1ProjectContextAssetsTests {
         assertThat(Files.readString(projectRoot.resolve("AGENTS.md"))).contains("Project AI Context Entry");
         assertThat(Files.readString(projectRoot.resolve(".ai/AI_README.md"))).contains("demo-context-project");
         assertThat(Files.readString(projectRoot.resolve(".ai/generated/dev-guide.md"))).contains("mvn test");
+        assertThat(Files.readString(projectRoot.resolve(".ai/generated/project-structure.md")))
+                .doesNotContain(".ai/reviews")
+                .doesNotContain("data")
+                .doesNotContain("target");
         assertThat(Files.readString(projectRoot.resolve(".ai/code-map.json")))
                 .contains("Spring Boot")
                 .contains("HelloController")
-                .contains("mvn spring-boot:run");
+                .contains("mvn spring-boot:run")
+                .doesNotContain("review-1.md")
+                .doesNotContain("devcontext.sqlite");
 
         Path manualBusinessContext = projectRoot.resolve(".ai/manual/business-context.md");
         Files.writeString(manualBusinessContext, "custom business context");
@@ -106,6 +112,10 @@ class Mvp1ProjectContextAssetsTests {
         Files.createDirectories(root.resolve("src/main/java/com/example/web"));
         Files.createDirectories(root.resolve("src/main/resources"));
         Files.createDirectories(root.resolve("src/test/java/com/example"));
+        Files.createDirectories(root.resolve(".ai/reviews"));
+        Files.createDirectories(root.resolve("data"));
+        Files.createDirectories(root.resolve("target/classes"));
+        Files.createDirectories(root.resolve("logs"));
         Files.writeString(root.resolve("pom.xml"), """
                 <project>
                   <dependencies>
@@ -117,6 +127,9 @@ class Mvp1ProjectContextAssetsTests {
                 </project>
                 """);
         Files.writeString(root.resolve("README.md"), "# Demo Context Project\n");
+        Files.writeString(root.resolve(".ai/reviews/review-1.md"), "# Old Review\n");
+        Files.writeString(root.resolve("data/devcontext.sqlite"), "sqlite-data");
+        Files.writeString(root.resolve("logs/app.log"), "log-data");
         Files.writeString(root.resolve("src/main/resources/application.yml"), "server:\n  port: 18080\n");
         Files.writeString(root.resolve("src/main/java/com/example/DemoApplication.java"), """
                 package com.example;

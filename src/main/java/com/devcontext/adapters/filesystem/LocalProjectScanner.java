@@ -22,7 +22,19 @@ import org.springframework.stereotype.Component;
 public class LocalProjectScanner implements ProjectScanner {
 
     private static final List<String> IGNORED_DIRS = List.of(
-            ".git", "target", "build", "node_modules", ".idea", ".vscode", "out", "dist"
+            ".git",
+            ".ai",
+            ".idea",
+            ".vscode",
+            ".gradle",
+            "target",
+            "build",
+            "out",
+            "dist",
+            "node_modules",
+            "coverage",
+            "data",
+            "logs"
     );
     private static final Pattern PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([\\w.]+)\\s*;");
     private static final Pattern METHOD_PATTERN = Pattern.compile("\\b(public|protected|private)\\s+[^=;{}]+\\s+(\\w+)\\s*\\(");
@@ -339,7 +351,7 @@ public class LocalProjectScanner implements ProjectScanner {
     private boolean isIgnored(Path root, Path path) {
         Path relative = root.relativize(path.toAbsolutePath().normalize());
         for (Path part : relative) {
-            if (IGNORED_DIRS.contains(part.toString())) {
+            if (IGNORED_DIRS.contains(part.toString().toLowerCase())) {
                 return true;
             }
         }
