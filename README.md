@@ -7,7 +7,7 @@ and development knowledge into reusable context for AI-assisted coding.
 
 ## Current Status
 
-The project has completed the MVP0 foundation branch.
+The project has completed the MVP1 project context assets branch.
 
 Implemented:
 
@@ -16,6 +16,9 @@ Implemented:
 - SQLite local storage under `data/devcontext.sqlite`
 - Project registration and query APIs
 - Pluggable `ContextProvider` / `ContextItem` foundation
+- Project scanner and generated AI context assets
+- Generated `AGENTS.md`, `.ai/AI_README.md`, `.ai/generated/*`, and `.ai/code-map.json`
+- Manual `.ai/manual/*` templates that are preserved by default
 - `LlmClient` port with a mock adapter
 - Traceable `AgentRun` / `AgentEvent` execution flow
 - Full planning documents under `docs/`
@@ -43,11 +46,13 @@ Health check:
 GET http://localhost:18080/api/health
 ```
 
-MVP0 smoke flow:
+MVP smoke flow:
 
 ```http
 POST http://localhost:18080/api/projects
 GET  http://localhost:18080/api/projects
+POST http://localhost:18080/api/projects/{projectId}/context/generate
+GET  http://localhost:18080/api/projects/{projectId}/context
 GET  http://localhost:18080/api/projects/{projectId}/context-items
 POST http://localhost:18080/api/agent-runs/mock-llm
 GET  http://localhost:18080/api/agent-runs/{runId}/events

@@ -55,3 +55,17 @@ CREATE TABLE IF NOT EXISTS context_item (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS context_document (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    doc_type TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    generated INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    source_commit TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_context_document_project_path
+ON context_document (project_id, file_path);
