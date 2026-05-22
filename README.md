@@ -36,6 +36,5 @@ mvn spring-boot:run
 Health check:
 
 ```http
-GET http://localhost:8080/api/health
+GET http://localhost:18080/api/health
 ```
-
