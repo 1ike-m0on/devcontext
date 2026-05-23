@@ -102,3 +102,41 @@ CREATE TABLE IF NOT EXISTS review_issue (
 
 CREATE INDEX IF NOT EXISTS idx_review_issue_review_id
 ON review_issue (review_id);
+
+CREATE TABLE IF NOT EXISTS decision_card (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER,
+    title TEXT NOT NULL,
+    scenario TEXT NOT NULL,
+    options_json TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    reasons_json TEXT NOT NULL,
+    trade_offs_json TEXT NOT NULL,
+    applicable_when_json TEXT NOT NULL,
+    not_applicable_when_json TEXT NOT NULL,
+    outcome TEXT,
+    evidence_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    tags_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_card_project_id
+ON decision_card (project_id);
+
+CREATE INDEX IF NOT EXISTS idx_decision_card_status
+ON decision_card (status);
+
+CREATE TABLE IF NOT EXISTS decision_reuse_record (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    project_id INTEGER,
+    matched_decision_ids_json TEXT NOT NULL,
+    advice TEXT NOT NULL,
+    accepted INTEGER,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_reuse_record_project_id
+ON decision_reuse_record (project_id);
