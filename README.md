@@ -7,7 +7,8 @@ and development knowledge into reusable context for AI-assisted coding.
 
 ## Current Status
 
-The project has completed the MVP0-MVP3 core loops.
+The project has completed the MVP0-MVP3 core loops and the first v0.4 local
+knowledge RAG loop.
 
 Implemented:
 
@@ -26,6 +27,12 @@ Implemented:
 - Decision Memory retrieval with tags and lightweight keyword matching
 - Decision reuse advice generation through the configured LLM adapter
 - Decision reuse records persisted with traceable run events
+- Local knowledge source registration and Markdown indexing
+- Markdown chunking with deterministic local embedding
+- Replaceable `EmbeddingClient`, `VectorStore`, and `KeywordSearchEngine` ports
+- SQLite-backed local vector document adapter for MVP verification
+- Hybrid knowledge retrieval with keyword, vector, and fused scores
+- RAG answer generation with citations and retrieval trace records
 - `LlmClient` port with a mock adapter
 - Traceable `AgentRun` / `AgentEvent` execution flow
 
@@ -51,6 +58,12 @@ call the configured LLM, parse the response, and persist review issues.
 DevContext stores engineering trade-offs as Decision Cards and recalls them when
 a similar problem appears later. This is currently implemented with tags and
 keyword matching; semantic vector retrieval is planned as a post-MVP enhancement.
+
+### 4. Local Knowledge RAG
+
+DevContext can import local Markdown knowledge sources, split documents into
+chunks, build local embeddings, run hybrid retrieval, and answer with cited
+source snippets.
 
 ## Local Development
 
@@ -83,6 +96,12 @@ GET  http://localhost:18080/api/decisions/{decisionId}
 POST http://localhost:18080/api/decisions/search
 POST http://localhost:18080/api/decisions/reuse-advice
 GET  http://localhost:18080/api/agent-runs/{runId}/events
+POST http://localhost:18080/api/knowledge-sources
+GET  http://localhost:18080/api/knowledge-sources
+POST http://localhost:18080/api/knowledge-sources/{sourceId}/index
+POST http://localhost:18080/api/knowledge/search
+POST http://localhost:18080/api/knowledge/ask
+GET  http://localhost:18080/api/knowledge/runs/{runId}
 ```
 
 ## LLM Configuration

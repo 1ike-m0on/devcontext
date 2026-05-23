@@ -140,3 +140,79 @@ CREATE TABLE IF NOT EXISTS decision_reuse_record (
 
 CREATE INDEX IF NOT EXISTS idx_decision_reuse_record_project_id
 ON decision_reuse_record (project_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_source (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    root_path TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_document (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    indexed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_document_source_id
+ON knowledge_document (source_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_document_source_path
+ON knowledge_document (source_id, file_path);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunk (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+    document_id INTEGER NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    heading_path TEXT,
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    token_estimate INTEGER NOT NULL,
+    vector_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_source_id
+ON knowledge_chunk (source_id);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_document_id
+ON knowledge_chunk (document_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_chunk_vector_id
+ON knowledge_chunk (vector_id);
+
+CREATE TABLE IF NOT EXISTS vector_document (
+    vector_id TEXT PRIMARY KEY,
+    collection TEXT NOT NULL,
+    source_id INTEGER,
+    embedding_json TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vector_document_collection_source
+ON vector_document (collection, source_id);
+
+CREATE TABLE IF NOT EXISTS retrieval_record (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER,
+    query TEXT NOT NULL,
+    rewritten_query TEXT NOT NULL,
+    top_k INTEGER NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_retrieval_record_run_id
+ON retrieval_record (run_id);
