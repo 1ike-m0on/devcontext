@@ -24,17 +24,6 @@ Implemented:
 - Review issue lifecycle tracking: `pending`, `accepted`, `rejected`, `false_positive`, `fixed`, `ignored`
 - `LlmClient` port with a mock adapter
 - Traceable `AgentRun` / `AgentEvent` execution flow
-- Full planning documents under `docs/`
-
-## Documentation
-
-Start here:
-
-- [Documentation Index](docs/README.md)
-- [Master Plan](docs/00-master-plan.md)
-- [Architecture Principles](docs/01-architecture-principles.md)
-- [Git Workflow](docs/02-git-workflow.md)
-- [Development Guide](docs/03-dev-guide.md)
 
 ## Local Development
 
