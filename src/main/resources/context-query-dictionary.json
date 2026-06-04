@@ -1,0 +1,99 @@
+{
+  "concepts": [
+    {
+      "id": "flash-sale",
+      "terms": ["seckill", "flash", "sale", "flash-sale"],
+      "aliases": ["秒杀", "闪购", "抢券", "flash sale", "flash-sale", "seckill", "フラッシュセール", "タイムセール"]
+    },
+    {
+      "id": "voucher-order",
+      "terms": ["voucher", "order", "voucher-order"],
+      "aliases": ["订单", "下单", "代金券订单", "优惠券订单", "order", "voucher order", "注文", "オーダー"]
+    },
+    {
+      "id": "order-close",
+      "terms": ["order", "close", "timeout", "expire", "order-close"],
+      "aliases": ["关单", "关闭订单", "订单超时", "超时关闭", "过期订单", "order timeout", "timeout order", "close order", "expired order", "注文タイムアウト", "注文のタイムアウト", "注文を閉じる"]
+    },
+    {
+      "id": "stock-release",
+      "terms": ["stock", "inventory", "release", "stock-release"],
+      "aliases": ["库存", "释放库存", "库存释放", "release stock", "stock release", "在庫", "在庫解放"]
+    },
+    {
+      "id": "stock-deduction",
+      "terms": ["stock", "inventory", "deduct", "decrement", "stock-deduction"],
+      "aliases": ["扣减库存", "库存扣减", "扣库存", "减库存", "deduct stock", "stock deduction", "decrement stock", "在庫控除", "在庫を減らす"]
+    },
+    {
+      "id": "script",
+      "terms": ["script", "lua"],
+      "aliases": ["脚本", "Lua 脚本", "lua脚本", "script", "lua script", "スクリプト", "Luaスクリプト"]
+    },
+    {
+      "id": "rate-limit",
+      "terms": ["rate", "limit", "rate-limit", "limiter"],
+      "aliases": ["限流", "限速", "滑动窗口", "rate limit", "rate-limit", "throttle", "throttling", "sliding window", "レート制限", "スロットリング"]
+    },
+    {
+      "id": "cache-invalidation",
+      "terms": ["cache", "caffeine", "redis", "invalidation", "invalidate", "delete"],
+      "aliases": ["缓存", "缓存失效", "失效", "缓存删除", "cache", "cache invalidation", "invalidate cache", "キャッシュ", "キャッシュ無効化"]
+    },
+    {
+      "id": "warmup",
+      "terms": ["warmup", "startup", "preload"],
+      "aliases": ["预热", "启动预热", "warmup", "preload", "startup warmup", "ウォームアップ", "事前ロード"]
+    },
+    {
+      "id": "message-queue",
+      "terms": ["message", "mq", "rocketmq", "queue"],
+      "aliases": ["消息", "消息队列", "mq", "rocketmq", "message queue", "キュー", "メッセージキュー"]
+    },
+    {
+      "id": "transaction",
+      "terms": ["transaction", "transactional"],
+      "aliases": ["事务", "事务边界", "transaction", "transactional", "トランザクション"]
+    },
+    {
+      "id": "auth",
+      "terms": ["login", "auth", "token", "interceptor", "auth-token"],
+      "aliases": ["登录", "鉴权", "认证", "token", "auth", "login", "authentication", "authorization", "認証", "ログイン"]
+    },
+    {
+      "id": "performance",
+      "terms": ["performance", "metrics", "micrometer"],
+      "aliases": ["性能", "性能怎么样", "吞吐", "延迟", "qps", "p95", "latency", "throughput", "performance", "パフォーマンス", "レイテンシ"]
+    },
+    {
+      "id": "observability",
+      "terms": ["metrics", "micrometer", "prometheus", "grafana", "actuator", "dashboard", "monitoring"],
+      "aliases": ["监控", "指标", "埋点", "可观测", "仪表盘", "监控面板", "metrics", "monitoring", "prometheus", "grafana", "actuator", "dashboard", "observability", "メトリクス", "監視", "ダッシュボード"]
+    },
+    {
+      "id": "payment",
+      "terms": ["payment", "pay", "order"],
+      "aliases": ["支付", "付款", "支付回调", "payment", "pay", "payment callback", "決済", "支払い"]
+    },
+    {
+      "id": "database-schema",
+      "terms": ["sql", "database", "schema", "table", "column", "index", "migration", "mapper", "mybatis", "database-schema"],
+      "aliases": ["SQL", "索引", "数据库", "表结构", "建表", "字段", "数据表", "迁移脚本", "mapper", "mybatis", "查询语句", "database", "schema", "table", "column", "index", "migration", "database schema", "インデックス", "データベース", "テーブル", "スキーマ", "カラム"]
+    },
+    {
+      "id": "configuration",
+      "terms": ["config", "configuration", "properties", "yaml", "yml", "profile", "port", "environment"],
+      "aliases": ["配置", "配置文件", "端口", "环境变量", "启动参数", "profile", "properties", "yaml", "yml", "config", "configuration", "server port", "environment variable", "設定", "設定ファイル", "ポート", "環境変数"]
+    },
+    {
+      "id": "code-structure",
+      "terms": ["code", "structure", "controller", "service", "repository", "dao", "entity", "class", "method", "endpoint", "api", "implementation", "call-chain", "code-structure"],
+      "aliases": ["代码结构", "源码", "实现", "接口", "类", "方法", "调用链", "控制器", "服务类", "仓储", "实体", "controller", "service", "repository", "dao", "entity", "endpoint", "api", "class", "method", "implementation", "call chain", "コード構造", "実装", "クラス", "メソッド"]
+    },
+    {
+      "id": "testing",
+      "terms": ["test", "testing", "junit", "mock", "fixture", "coverage"],
+      "aliases": ["测试", "单元测试", "集成测试", "测试覆盖", "覆盖率", "mock", "fixture", "junit", "test", "testing", "coverage", "テスト", "カバレッジ"]
+    }
+  ]
+}

@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: devcontext
   datasource:
@@ -19,3 +21,16 @@ devcontext:
       api-key: ${GEMINI_API_KEY:}
       model: ${GEMINI_MODEL:gemini-2.0-flash}
       base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+      timeout: ${GEMINI_TIMEOUT:60s}
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY:}
+      model: ${DEEPSEEK_MODEL:deepseek-chat}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      timeout: ${DEEPSEEK_TIMEOUT:120s}
+  vector:
+    provider: ${DEVCONTEXT_VECTOR_PROVIDER:jdbc}
+    qdrant:
+      base-url: ${QDRANT_BASE_URL:http://localhost:6333}
+      api-key: ${QDRANT_API_KEY:}
+      distance: ${QDRANT_DISTANCE:Cosine}
+      timeout: ${QDRANT_TIMEOUT:10s}

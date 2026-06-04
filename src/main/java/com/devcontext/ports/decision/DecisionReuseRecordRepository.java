@@ -8,4 +8,6 @@ public interface DecisionReuseRecordRepository {
     DecisionReuseRecord save(DecisionReuseRecord record);
 
     Optional<DecisionReuseRecord> findById(Long recordId);
+
+    DecisionReuseRecord updateFeedback(Long recordId, String status, Boolean accepted, String userFeedback);
 }

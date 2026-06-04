@@ -12,5 +12,7 @@ public interface ReviewIssueRepository {
 
     Optional<ReviewIssue> findById(Long issueId);
 
+    List<ReviewIssue> findRecentFeedbackByProjectId(Long projectId, int limit);
+
     ReviewIssue updateStatus(Long issueId, String status, String note);
 }

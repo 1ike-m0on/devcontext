@@ -51,6 +51,10 @@ public class DecisionPromptBuilder {
             prompt.append("- Not applicable when: ").append(String.join("; ", safeList(card.notApplicableWhen()))).append("\n");
             prompt.append("- Outcome: ").append(valueOr(card.outcome(), "Unknown")).append("\n");
             prompt.append("- Search score: ").append(match.score()).append("\n");
+            prompt.append("- Score breakdown: tag=").append(match.tagScore())
+                    .append(", keyword=").append(match.keywordScore())
+                    .append(", vector=").append(match.vectorScore()).append("\n");
+            prompt.append("- Match reasons: ").append(String.join(", ", match.matchReasons())).append("\n");
             prompt.append("- Matched tags: ").append(String.join(", ", match.matchedTags())).append("\n");
             prompt.append("- Matched terms: ").append(String.join(", ", match.matchedTerms())).append("\n");
             prompt.append("- Evidence:\n");

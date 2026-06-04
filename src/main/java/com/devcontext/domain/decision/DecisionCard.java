@@ -18,6 +18,8 @@ public record DecisionCard(
         List<DecisionEvidence> evidence,
         String status,
         List<String> tags,
+        String embeddingStatus,
+        Instant embeddingUpdatedAt,
         Instant createdAt,
         Instant updatedAt
 ) {

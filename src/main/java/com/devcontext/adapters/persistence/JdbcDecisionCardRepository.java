@@ -10,6 +10,7 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Types;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -43,6 +44,8 @@ public class JdbcDecisionCardRepository implements DecisionCardRepository {
             readList(rs.getString("evidence_json"), EVIDENCE_LIST),
             rs.getString("status"),
             readList(rs.getString("tags_json"), STRING_LIST),
+            rs.getString("embedding_status"),
+            nullableInstant(rs.getString("embedding_updated_at")),
             Instant.parse(rs.getString("created_at")),
             Instant.parse(rs.getString("updated_at"))
     );
@@ -60,9 +63,10 @@ public class JdbcDecisionCardRepository implements DecisionCardRepository {
                     INSERT INTO decision_card (
                         project_id, title, scenario, options_json, decision, reasons_json,
                         trade_offs_json, applicable_when_json, not_applicable_when_json,
-                        outcome, evidence_json, status, tags_json, created_at, updated_at
+                        outcome, evidence_json, status, tags_json, embedding_status,
+                        embedding_updated_at, created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             setNullableLong(statement, 1, card.projectId());
             statement.setString(2, card.title());
@@ -77,8 +81,10 @@ public class JdbcDecisionCardRepository implements DecisionCardRepository {
             statement.setString(11, writeJson(card.evidence()));
             statement.setString(12, card.status());
             statement.setString(13, writeJson(card.tags()));
-            statement.setString(14, card.createdAt().toString());
-            statement.setString(15, card.updatedAt().toString());
+            statement.setString(14, card.embeddingStatus());
+            setNullableInstant(statement, 15, card.embeddingUpdatedAt());
+            statement.setString(16, card.createdAt().toString());
+            statement.setString(17, card.updatedAt().toString());
             return statement;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -97,6 +103,8 @@ public class JdbcDecisionCardRepository implements DecisionCardRepository {
                 card.evidence(),
                 card.status(),
                 card.tags(),
+                card.embeddingStatus(),
+                card.embeddingUpdatedAt(),
                 card.createdAt(),
                 card.updatedAt()
         );
@@ -122,6 +130,41 @@ public class JdbcDecisionCardRepository implements DecisionCardRepository {
                 """, rowMapper, projectId);
     }
 
+    @Override
+    public List<DecisionCard> findByIds(Collection<Long> decisionIds) {
+        if (decisionIds == null || decisionIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(",", decisionIds.stream().map(ignored -> "?").toList());
+        return jdbcTemplate.query(
+                "SELECT * FROM decision_card WHERE id IN (" + placeholders + ")",
+                rowMapper,
+                decisionIds.toArray()
+        );
+    }
+
+    @Override
+    public DecisionCard updateEmbeddingStatus(Long decisionId, String embeddingStatus, Instant embeddingUpdatedAt) {
+        jdbcTemplate.update("""
+                UPDATE decision_card
+                SET embedding_status = ?, embedding_updated_at = ?
+                WHERE id = ?
+                """, embeddingStatus, embeddingUpdatedAt == null ? null : embeddingUpdatedAt.toString(), decisionId);
+        return findById(decisionId)
+                .orElseThrow(() -> new IllegalStateException("Decision card not found after embedding status update"));
+    }
+
+    @Override
+    public DecisionCard updateStatus(Long decisionId, String status, Instant updatedAt) {
+        jdbcTemplate.update("""
+                UPDATE decision_card
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+                """, status, updatedAt.toString(), decisionId);
+        return findById(decisionId)
+                .orElseThrow(() -> new IllegalStateException("Decision card not found after status update"));
+    }
+
     private void setNullableLong(PreparedStatement statement, int index, Long value) throws java.sql.SQLException {
         if (value == null) {
             statement.setNull(index, Types.BIGINT);
@@ -130,8 +173,20 @@ public class JdbcDecisionCardRepository implements DecisionCardRepository {
         }
     }
 
+    private void setNullableInstant(PreparedStatement statement, int index, Instant value) throws java.sql.SQLException {
+        if (value == null) {
+            statement.setNull(index, Types.VARCHAR);
+        } else {
+            statement.setString(index, value.toString());
+        }
+    }
+
     private Long nullableLong(Object rawValue, long longValue) {
         return rawValue == null ? null : longValue;
+    }
+
+    private Instant nullableInstant(String value) {
+        return value == null || value.isBlank() ? null : Instant.parse(value);
     }
 
     private String writeJson(Object value) {

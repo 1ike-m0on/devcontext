@@ -7,6 +7,7 @@ public record RagAnswerResult(
         Long retrievalRecordId,
         String query,
         String rewrittenQuery,
+        KnowledgeQueryPlan queryPlan,
         String answer,
         List<KnowledgeSearchResult> citations
 ) {

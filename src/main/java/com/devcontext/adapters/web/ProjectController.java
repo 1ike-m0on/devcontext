@@ -9,8 +9,11 @@ import com.devcontext.domain.project.Project;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.util.List;
+import java.util.Map;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -43,6 +46,28 @@ public class ProjectController {
         return ApiResponse.ok(projectService.getProject(projectId));
     }
 
+    @PatchMapping("/{projectId}")
+    public ApiResponse<Project> updateProject(
+            @PathVariable Long projectId,
+            @RequestBody UpdateProjectRequest request
+    ) {
+        return ApiResponse.ok(projectService.updateProject(
+                projectId,
+                request.name(),
+                request.rootPath(),
+                request.defaultBranch()
+        ));
+    }
+
+    @DeleteMapping("/{projectId}")
+    public ApiResponse<Map<String, Object>> deleteProject(@PathVariable Long projectId) {
+        projectService.deleteProject(projectId);
+        return ApiResponse.ok(Map.of(
+                "projectId", projectId,
+                "deleted", true
+        ));
+    }
+
     @GetMapping("/{projectId}/context-items")
     public ApiResponse<List<ContextItem>> getProjectContextItems(@PathVariable Long projectId) {
         return ApiResponse.ok(contextAssembler.assemble(new ContextRequest(projectId, "MVP0_INSPECT")));
@@ -54,5 +79,11 @@ public class ProjectController {
             String defaultBranch
     ) {
     }
-}
 
+    public record UpdateProjectRequest(
+            String name,
+            String rootPath,
+            String defaultBranch
+    ) {
+    }
+}

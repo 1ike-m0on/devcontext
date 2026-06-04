@@ -20,11 +20,15 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 @ConditionalOnProperty(name = "devcontext.llm.provider", havingValue = "gemini")
 public class GeminiLlmClient implements LlmClient {
+
+    private static final Logger log = LoggerFactory.getLogger(GeminiLlmClient.class);
 
     private final DevContextLlmProperties properties;
     private final ObjectMapper objectMapper;
@@ -36,6 +40,10 @@ public class GeminiLlmClient implements LlmClient {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
+        log.info("Gemini LLM client initialized with model {}, base URL {}, and timeout {}",
+                properties.gemini().model(),
+                properties.gemini().baseUrl(),
+                properties.gemini().timeout());
     }
 
     @Override
@@ -46,8 +54,10 @@ public class GeminiLlmClient implements LlmClient {
         }
         String modelName = configuredModel(request, gemini);
         HttpRequest httpRequest = buildRequest(gemini, modelName, request.prompt());
+        log.info("Calling Gemini model {} via {} with timeout {}", modelName, trimTrailingSlash(gemini.baseUrl()), gemini.timeout());
         try {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            log.info("Gemini response status {}", response.statusCode());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new ApiException("LLM_CALL_FAILED", summarizeGeminiError(response.body()), HttpStatus.BAD_GATEWAY);
             }
@@ -59,6 +69,7 @@ public class GeminiLlmClient implements LlmClient {
                     estimateTokens(content)
             );
         } catch (IOException e) {
+            log.warn("Gemini request failed before receiving a valid response: {}", e.getMessage());
             throw new ApiException("LLM_CALL_FAILED", "Gemini request failed: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -77,7 +88,7 @@ public class GeminiLlmClient implements LlmClient {
         ));
         return HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/models/" + encodedModel + ":generateContent"))
-                .timeout(Duration.ofSeconds(60))
+                .timeout(gemini.timeout())
                 .header("Content-Type", "application/json")
                 .header("x-goog-api-key", gemini.apiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))

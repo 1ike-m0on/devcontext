@@ -82,4 +82,16 @@ public class JdbcReviewRecordRepository implements ReviewRecordRepository {
         List<ReviewRecord> records = jdbcTemplate.query("SELECT * FROM review_record WHERE id = ?", rowMapper, reviewId);
         return records.stream().findFirst();
     }
+
+    @Override
+    public List<ReviewRecord> findByProjectId(Long projectId, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        return jdbcTemplate.query("""
+                SELECT *
+                FROM review_record
+                WHERE project_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """, rowMapper, projectId, safeLimit);
+    }
 }

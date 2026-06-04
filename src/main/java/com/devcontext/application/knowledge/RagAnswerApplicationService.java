@@ -10,6 +10,7 @@ import com.devcontext.domain.llm.LlmResponse;
 import com.devcontext.domain.run.AgentRun;
 import com.devcontext.ports.knowledge.RetrievalRecordRepository;
 import com.devcontext.ports.llm.LlmClient;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -47,9 +48,11 @@ public class RagAnswerApplicationService {
                     command.topK()
             ), run.id());
             runService.recordEvent(run.id(), "KNOWLEDGE_QUERY_REWRITTEN", searchResponse.query(), searchResponse.rewrittenQuery(), "success", null, null);
+            runService.recordEvent(run.id(), "KNOWLEDGE_QUERY_PLAN_BUILT", searchResponse.query(), searchResponse.queryPlan().preferredEvidenceTypes().toString(), "success", null, null);
             runService.recordEvent(run.id(), "KNOWLEDGE_RETRIEVED", searchResponse.rewrittenQuery(), searchResponse.results().size() + " chunks retrieved", "success", null, null);
+            runService.recordEvent(run.id(), "KNOWLEDGE_EVIDENCE_RETRIEVED", searchResponse.queryPlan().requiredEvidenceTypes().toString(), evidenceDistribution(searchResponse), "success", null, null);
 
-            String prompt = promptBuilder.build(searchResponse.query(), searchResponse.rewrittenQuery(), searchResponse.results());
+            String prompt = promptBuilder.build(searchResponse.query(), searchResponse.rewrittenQuery(), searchResponse.queryPlan(), searchResponse.results());
             runService.recordEvent(run.id(), "PROMPT_BUILT", "knowledge RAG prompt", prompt.length() + " chars", "success", null, null);
 
             LlmResponse response = llmClient.chat(new LlmRequest(prompt, llmProperties.modelName()));
@@ -61,6 +64,7 @@ public class RagAnswerApplicationService {
                     searchResponse.retrievalRecordId(),
                     searchResponse.query(),
                     searchResponse.rewrittenQuery(),
+                    searchResponse.queryPlan(),
                     response.content(),
                     searchResponse.results()
             );
@@ -76,5 +80,12 @@ public class RagAnswerApplicationService {
                 runService.listEvents(runId),
                 retrievalRecordRepository.findByRunId(runId)
         );
+    }
+
+    private String evidenceDistribution(KnowledgeSearchResponse response) {
+        return response.results().stream()
+                .flatMap(result -> result.evidenceTypes().stream())
+                .collect(Collectors.groupingBy(Enum::name, Collectors.counting()))
+                .toString();
     }
 }

@@ -102,6 +102,26 @@ public class JdbcAgentRunRepository implements AgentRunRepository {
         return runs.stream().findFirst();
     }
 
+    @Override
+    public List<AgentRun> findRecent(Long projectId, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        if (projectId == null) {
+            return jdbcTemplate.query("""
+                    SELECT *
+                    FROM agent_run
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """, rowMapper, safeLimit);
+        }
+        return jdbcTemplate.query("""
+                SELECT *
+                FROM agent_run
+                WHERE project_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """, rowMapper, projectId, safeLimit);
+    }
+
     private static Long nullableLong(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
         long value = rs.getLong(column);
         return rs.wasNull() ? null : value;
@@ -116,4 +136,3 @@ public class JdbcAgentRunRepository implements AgentRunRepository {
         return value == null ? null : Instant.parse(value);
     }
 }
-

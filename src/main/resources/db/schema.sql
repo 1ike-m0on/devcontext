@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS review_record (
     created_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_review_record_project_id
+ON review_record (project_id);
+
 CREATE TABLE IF NOT EXISTS review_issue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     review_id INTEGER NOT NULL,
@@ -103,6 +106,9 @@ CREATE TABLE IF NOT EXISTS review_issue (
 CREATE INDEX IF NOT EXISTS idx_review_issue_review_id
 ON review_issue (review_id);
 
+CREATE INDEX IF NOT EXISTS idx_review_issue_status_updated_at
+ON review_issue (status, updated_at);
+
 CREATE TABLE IF NOT EXISTS decision_card (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER,
@@ -118,6 +124,8 @@ CREATE TABLE IF NOT EXISTS decision_card (
     evidence_json TEXT NOT NULL,
     status TEXT NOT NULL,
     tags_json TEXT NOT NULL,
+    embedding_status TEXT NOT NULL DEFAULT 'pending',
+    embedding_updated_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -130,11 +138,14 @@ ON decision_card (status);
 
 CREATE TABLE IF NOT EXISTS decision_reuse_record (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER,
     query TEXT NOT NULL,
     project_id INTEGER,
     matched_decision_ids_json TEXT NOT NULL,
     advice TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
     accepted INTEGER,
+    user_feedback TEXT,
     created_at TEXT NOT NULL
 );
 

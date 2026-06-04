@@ -27,11 +27,14 @@ public class JdbcDecisionReuseRecordRepository implements DecisionReuseRecordRep
     private final ObjectMapper objectMapper;
     private final RowMapper<DecisionReuseRecord> rowMapper = (rs, rowNum) -> new DecisionReuseRecord(
             rs.getLong("id"),
+            nullableLong(rs.getObject("run_id"), rs.getLong("run_id")),
             rs.getString("query"),
             nullableLong(rs.getObject("project_id"), rs.getLong("project_id")),
             readJson(rs.getString("matched_decision_ids_json")),
             rs.getString("advice"),
+            rs.getString("status"),
             nullableBoolean(rs.getObject("accepted"), rs.getInt("accepted")),
+            rs.getString("user_feedback"),
             Instant.parse(rs.getString("created_at"))
     );
 
@@ -46,26 +49,32 @@ public class JdbcDecisionReuseRecordRepository implements DecisionReuseRecordRep
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO decision_reuse_record (
-                        query, project_id, matched_decision_ids_json, advice, accepted, created_at
+                        run_id, query, project_id, matched_decision_ids_json, advice, status, accepted, user_feedback, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
-            statement.setString(1, record.query());
-            setNullableLong(statement, 2, record.projectId());
-            statement.setString(3, writeJson(record.matchedDecisionIds()));
-            statement.setString(4, record.advice());
-            setNullableBoolean(statement, 5, record.accepted());
-            statement.setString(6, record.createdAt().toString());
+            setNullableLong(statement, 1, record.runId());
+            statement.setString(2, record.query());
+            setNullableLong(statement, 3, record.projectId());
+            statement.setString(4, writeJson(record.matchedDecisionIds()));
+            statement.setString(5, record.advice());
+            statement.setString(6, record.status());
+            setNullableBoolean(statement, 7, record.accepted());
+            statement.setString(8, record.userFeedback());
+            statement.setString(9, record.createdAt().toString());
             return statement;
         }, keyHolder);
         Number key = keyHolder.getKey();
         return new DecisionReuseRecord(
                 key == null ? null : key.longValue(),
+                record.runId(),
                 record.query(),
                 record.projectId(),
                 record.matchedDecisionIds(),
                 record.advice(),
+                record.status(),
                 record.accepted(),
+                record.userFeedback(),
                 record.createdAt()
         );
     }
@@ -74,6 +83,17 @@ public class JdbcDecisionReuseRecordRepository implements DecisionReuseRecordRep
     public Optional<DecisionReuseRecord> findById(Long recordId) {
         List<DecisionReuseRecord> records = jdbcTemplate.query("SELECT * FROM decision_reuse_record WHERE id = ?", rowMapper, recordId);
         return records.stream().findFirst();
+    }
+
+    @Override
+    public DecisionReuseRecord updateFeedback(Long recordId, String status, Boolean accepted, String userFeedback) {
+        jdbcTemplate.update("""
+                UPDATE decision_reuse_record
+                SET status = ?, accepted = ?, user_feedback = ?
+                WHERE id = ?
+                """, status, accepted == null ? null : (accepted ? 1 : 0), userFeedback, recordId);
+        return findById(recordId)
+                .orElseThrow(() -> new IllegalStateException("Decision reuse record not found after feedback update"));
     }
 
     private void setNullableLong(PreparedStatement statement, int index, Long value) throws java.sql.SQLException {

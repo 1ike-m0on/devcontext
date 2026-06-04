@@ -51,6 +51,35 @@ public class ReviewReportParser {
         return new ParsedReviewReport(3.0, summary, "Need confirmation.", "Need confirmation.", List.of(), List.of(), List.of(), markdown, responseContent);
     }
 
+    public ParsedReviewReport rebuild(
+            ParsedReviewReport report,
+            List<String> testGaps,
+            List<String> recommendations,
+            List<ReviewIssueDraft> issues
+    ) {
+        String markdown = renderMarkdown(
+                report.score(),
+                report.summary(),
+                report.changeIntent(),
+                report.impactScope(),
+                testGaps,
+                recommendations,
+                issues,
+                report.rawResponse()
+        );
+        return new ParsedReviewReport(
+                report.score(),
+                report.summary(),
+                report.changeIntent(),
+                report.impactScope(),
+                testGaps,
+                recommendations,
+                issues,
+                markdown,
+                report.rawResponse()
+        );
+    }
+
     private String extractJson(String content) {
         if (content == null || content.isBlank()) {
             return null;

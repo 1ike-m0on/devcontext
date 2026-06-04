@@ -106,6 +106,10 @@ public class AgentRunApplicationService {
                 .orElseThrow(() -> new ApiException("AGENT_RUN_NOT_FOUND", "Agent run not found", HttpStatus.NOT_FOUND));
     }
 
+    public List<AgentRun> listRuns(Long projectId, int limit) {
+        return runRepository.findRecent(projectId, limit);
+    }
+
     public List<AgentEvent> listEvents(Long runId) {
         getRun(runId);
         return eventRepository.findByRunId(runId);

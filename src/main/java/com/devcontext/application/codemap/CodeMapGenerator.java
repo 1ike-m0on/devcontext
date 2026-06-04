@@ -1,15 +1,26 @@
 package com.devcontext.application.codemap;
 
 import com.devcontext.domain.codemap.CodeEntrypoint;
+import com.devcontext.domain.codemap.CodeDependency;
+import com.devcontext.domain.codemap.CodeDomainTerm;
+import com.devcontext.domain.codemap.CodeEndpoint;
 import com.devcontext.domain.codemap.CodeMap;
 import com.devcontext.domain.codemap.CodeModule;
+import com.devcontext.domain.codemap.CodeRuntimeComponent;
+import com.devcontext.domain.codemap.CodeSymbol;
+import com.devcontext.domain.codemap.CodeTechnologySignal;
 import com.devcontext.domain.project.Project;
 import com.devcontext.domain.project.ProjectScan;
 import com.devcontext.domain.project.ScannedJavaFile;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
@@ -28,6 +39,12 @@ public class CodeMapGenerator {
                 scan.gitCommit(),
                 modules(scan),
                 entrypoints(scan),
+                symbols(scan),
+                endpoints(scan),
+                dependencies(scan),
+                technologies(scan),
+                runtimeComponents(scan),
+                domainTerms(scan),
                 scan.commands(),
                 scan.configFiles(),
                 scan.testRoots(),
@@ -52,6 +69,138 @@ public class CodeMapGenerator {
                 ))
                 .sorted(Comparator.comparing(CodeModule::path))
                 .limit(50)
+                .toList();
+    }
+
+    private List<CodeSymbol> symbols(ProjectScan scan) {
+        return scan.javaFiles().stream()
+                .map(file -> new CodeSymbol(
+                        file.className(),
+                        symbolRole(file),
+                        businessModule(file),
+                        file.path(),
+                        file.methods(),
+                        file.endpoints(),
+                        file.dependencies(),
+                        file.technologies(),
+                        domainTermsForFile(file)
+                ))
+                .sorted(Comparator.comparing(CodeSymbol::file))
+                .limit(500)
+                .toList();
+    }
+
+    private List<CodeEndpoint> endpoints(ProjectScan scan) {
+        return scan.javaFiles().stream()
+                .flatMap(file -> file.endpoints().stream()
+                        .map(endpoint -> parseEndpoint(file, endpoint)))
+                .sorted(Comparator.comparing(CodeEndpoint::path).thenComparing(CodeEndpoint::httpMethod))
+                .limit(300)
+                .toList();
+    }
+
+    private CodeEndpoint parseEndpoint(ScannedJavaFile file, String endpoint) {
+        String[] handlerParts = endpoint.split("\\s*->\\s*", 2);
+        String left = handlerParts[0].trim();
+        String handlerMethod = handlerParts.length > 1 ? handlerParts[1].trim() : "";
+        int firstSpace = left.indexOf(' ');
+        String httpMethod = firstSpace < 0 ? "ANY" : left.substring(0, firstSpace).trim();
+        String path = firstSpace < 0 ? left : left.substring(firstSpace + 1).trim();
+        return new CodeEndpoint(
+                httpMethod,
+                path,
+                handlerMethod,
+                file.className(),
+                businessModule(file),
+                file.path(),
+                domainTermsFromValues(List.of(path, handlerMethod, file.className()))
+        );
+    }
+
+    private List<CodeDependency> dependencies(ProjectScan scan) {
+        return scan.javaFiles().stream()
+                .flatMap(file -> file.dependencies().stream()
+                        .map(dependency -> new CodeDependency(
+                                file.className(),
+                                file.path(),
+                                dependency,
+                                businessModule(file)
+                        )))
+                .sorted(Comparator.comparing(CodeDependency::fromFile).thenComparing(CodeDependency::toType))
+                .limit(1_000)
+                .toList();
+    }
+
+    private List<CodeTechnologySignal> technologies(ProjectScan scan) {
+        Map<String, List<ScannedJavaFile>> grouped = new LinkedHashMap<>();
+        for (ScannedJavaFile file : scan.javaFiles()) {
+            for (String technology : file.technologies()) {
+                grouped.computeIfAbsent(technology, ignored -> new ArrayList<>()).add(file);
+            }
+        }
+        return grouped.entrySet().stream()
+                .map(entry -> new CodeTechnologySignal(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                                .map(ScannedJavaFile::className)
+                                .distinct()
+                                .sorted()
+                                .limit(80)
+                                .toList(),
+                        entry.getValue().stream()
+                                .map(ScannedJavaFile::path)
+                                .distinct()
+                                .sorted()
+                                .limit(80)
+                                .toList()
+                ))
+                .sorted(Comparator.comparing(CodeTechnologySignal::technology))
+                .toList();
+    }
+
+    private List<CodeRuntimeComponent> runtimeComponents(ProjectScan scan) {
+        return scan.javaFiles().stream()
+                .map(file -> Map.entry(file, runtimeComponentType(file)))
+                .filter(entry -> !entry.getValue().isBlank())
+                .map(entry -> new CodeRuntimeComponent(
+                        entry.getValue(),
+                        entry.getKey().className(),
+                        businessModule(entry.getKey()),
+                        entry.getKey().path(),
+                        entry.getKey().dependencies(),
+                        entry.getKey().technologies()
+                ))
+                .sorted(Comparator.comparing(CodeRuntimeComponent::type)
+                        .thenComparing(CodeRuntimeComponent::file))
+                .limit(200)
+                .toList();
+    }
+
+    private List<CodeDomainTerm> domainTerms(ProjectScan scan) {
+        Map<String, List<ScannedJavaFile>> grouped = new LinkedHashMap<>();
+        for (ScannedJavaFile file : scan.javaFiles()) {
+            for (String term : domainTermsForFile(file)) {
+                grouped.computeIfAbsent(term, ignored -> new ArrayList<>()).add(file);
+            }
+        }
+        return grouped.entrySet().stream()
+                .map(entry -> new CodeDomainTerm(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                                .map(ScannedJavaFile::className)
+                                .distinct()
+                                .sorted()
+                                .limit(30)
+                                .toList(),
+                        entry.getValue().stream()
+                                .map(ScannedJavaFile::path)
+                                .distinct()
+                                .sorted()
+                                .limit(30)
+                                .toList()
+                ))
+                .sorted(Comparator.comparing(CodeDomainTerm::term))
+                .limit(300)
                 .toList();
     }
 
@@ -83,9 +232,87 @@ public class CodeMapGenerator {
         return "entrypoint";
     }
 
+    private String symbolRole(ScannedJavaFile file) {
+        String className = file.className();
+        String lowerPath = file.path().toLowerCase(Locale.ROOT);
+        if (file.annotations().contains("@RestController") || file.annotations().contains("@Controller")
+                || className.endsWith("Controller")) {
+            return "controller";
+        }
+        if (file.annotations().contains("@Service") || lowerPath.contains("/service/")) {
+            return "service";
+        }
+        if (className.endsWith("Mapper") || lowerPath.contains("/mapper/")) {
+            return "mapper";
+        }
+        if (className.endsWith("Entity") || lowerPath.contains("/entity/")) {
+            return "entity";
+        }
+        if (file.annotations().contains("@Configuration") || lowerPath.contains("/config/")) {
+            return "configuration";
+        }
+        String runtimeType = runtimeComponentType(file);
+        if (!runtimeType.isBlank()) {
+            return runtimeType;
+        }
+        if (file.annotations().contains("@Component")) {
+            return "component";
+        }
+        return "support";
+    }
+
+    private String runtimeComponentType(ScannedJavaFile file) {
+        String className = file.className();
+        if (file.annotations().contains("@SpringBootApplication") || className.endsWith("Application")) {
+            return "application";
+        }
+        if (file.annotations().contains("@Scheduled") || className.endsWith("Scheduler")) {
+            return "scheduler";
+        }
+        if (className.endsWith("Consumer") || className.contains("Listener")) {
+            return "message-consumer";
+        }
+        if (className.endsWith("Publisher") || className.endsWith("Producer")) {
+            return "message-publisher";
+        }
+        if (className.endsWith("Runner")) {
+            return "startup-runner";
+        }
+        if (className.endsWith("Filter")) {
+            return "filter";
+        }
+        if (className.endsWith("Interceptor")) {
+            return "interceptor";
+        }
+        if (className.endsWith("Aspect")) {
+            return "aspect";
+        }
+        return "";
+    }
+
     private String modulePath(ScannedJavaFile file) {
         int lastSlash = file.path().lastIndexOf('/');
         return lastSlash < 0 ? "." : file.path().substring(0, lastSlash);
+    }
+
+    private String businessModule(ScannedJavaFile file) {
+        String path = file.path().replace('\\', '/').replace("src/main/java/", "");
+        String[] parts = path.split("/");
+        if (parts.length <= 1) {
+            return "root";
+        }
+        Set<String> roleSegments = Set.of(
+                "controller", "web", "service", "repository", "mapper", "dao", "entity",
+                "model", "domain", "config", "configuration", "job", "task", "scheduler",
+                "consumer", "publisher", "producer", "listener", "aspect", "filter", "interceptor"
+        );
+        for (int i = parts.length - 2; i >= 0; i--) {
+            String segment = parts[i].toLowerCase(Locale.ROOT);
+            if (!roleSegments.contains(segment) && !segment.isBlank()) {
+                return segment;
+            }
+        }
+        return "root";
     }
 
     private String moduleName(String path) {
@@ -112,4 +339,69 @@ public class CodeMapGenerator {
         }
         return "TODO: Confirm module responsibility.";
     }
+
+    private List<String> domainTermsForFile(ScannedJavaFile file) {
+        List<String> values = new ArrayList<>();
+        values.add(file.className());
+        values.add(file.path());
+        values.addAll(file.methods());
+        values.addAll(file.endpoints());
+        values.addAll(file.dependencies());
+        values.addAll(file.technologies());
+        return domainTermsFromValues(values);
+    }
+
+    private List<String> domainTermsFromValues(List<String> values) {
+        LinkedHashSet<String> terms = new LinkedHashSet<>();
+        for (String value : values) {
+            terms.addAll(tokenize(value));
+        }
+        addCompoundTerms(terms);
+        return terms.stream().limit(60).toList();
+    }
+
+    private List<String> tokenize(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        String separated = value
+                .replaceAll("([A-Z]+)([A-Z][a-z])", "$1 $2")
+                .replaceAll("([a-z\\d])([A-Z])", "$1 $2")
+                .replaceAll("[^A-Za-z0-9]+", " ")
+                .toLowerCase(Locale.ROOT);
+        return java.util.Arrays.stream(separated.split("\\s+"))
+                .filter(token -> !token.isBlank())
+                .filter(token -> token.length() >= 3 || token.equals("mq") || token.equals("id"))
+                .filter(token -> !STOP_WORDS.contains(token))
+                .distinct()
+                .toList();
+    }
+
+    private void addCompoundTerms(Set<String> terms) {
+        addIfAllPresent(terms, "flash-sale", "flash", "sale");
+        addIfAllPresent(terms, "voucher-order", "voucher", "order");
+        addIfAllPresent(terms, "rate-limit", "rate", "limit");
+        addIfAllPresent(terms, "stock-release", "stock", "release");
+        addIfAllPresent(terms, "order-close", "order", "close");
+        addIfAllPresent(terms, "auth-token", "auth", "token");
+        addIfAllPresent(terms, "redis-lua", "redis", "lua");
+        if (terms.contains("rocketmq") || (terms.contains("rocket") && terms.contains("mq"))) {
+            terms.add("rocketmq");
+        }
+    }
+
+    private void addIfAllPresent(Set<String> terms, String compound, String first, String second) {
+        if (terms.contains(first) && terms.contains(second)) {
+            terms.add(compound);
+        }
+    }
+
+    private static final Set<String> STOP_WORDS = Set.of(
+            "src", "main", "java", "test", "github", "com", "org", "net", "io",
+            "acme", "lifeservice",
+            "controller", "service", "impl", "mapper", "entity", "dto", "request", "response",
+            "config", "configuration", "common", "infrastructure", "application", "domain",
+            "get", "post", "put", "delete", "patch", "api", "class", "method", "handler",
+            "list", "page", "query", "create", "update", "find", "execute", "path", "string"
+    );
 }

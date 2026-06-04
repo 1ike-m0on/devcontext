@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -39,6 +40,14 @@ public class AgentRunController {
         return ApiResponse.ok(runService.getRun(runId));
     }
 
+    @GetMapping
+    public ApiResponse<List<AgentRun>> listRuns(
+            @RequestParam(required = false) Long projectId,
+            @RequestParam(required = false) Integer limit
+    ) {
+        return ApiResponse.ok(runService.listRuns(projectId, limit == null ? 30 : limit));
+    }
+
     @GetMapping("/{runId}/events")
     public ApiResponse<List<AgentEvent>> listEvents(@PathVariable Long runId) {
         return ApiResponse.ok(runService.listEvents(runId));
@@ -56,4 +65,3 @@ public class AgentRunController {
     ) {
     }
 }
-

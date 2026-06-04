@@ -7,6 +7,9 @@ public record ScannedJavaFile(
         String packageName,
         String className,
         List<String> annotations,
-        List<String> methods
+        List<String> methods,
+        List<String> endpoints,
+        List<String> dependencies,
+        List<String> technologies
 ) {
 }

@@ -8,8 +8,11 @@ public interface ProjectRepository {
 
     Project save(Project project);
 
+    Project update(Project project);
+
     Optional<Project> findById(Long id);
 
     List<Project> findAll();
-}
 
+    void deleteById(Long id);
+}

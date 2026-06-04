@@ -5,6 +5,10 @@ public record ReviewCreateResult(
         Long runId,
         double score,
         String summary,
-        String reportPath
+        String reportPath,
+        boolean diffTruncated
 ) {
+    public ReviewCreateResult(Long reviewId, Long runId, double score, String summary, String reportPath) {
+        this(reviewId, runId, score, summary, reportPath, false);
+    }
 }
