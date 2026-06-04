@@ -14,6 +14,7 @@ import com.devcontext.ports.llm.LlmClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
@@ -181,7 +182,7 @@ class Mvp2AiCodeReviewTests {
     void addsFocusedTestGapGuardrailWhenModelOnlyReportsInputValidation() throws Exception {
         createReviewFixture(projectRoot);
         Project project = projectService.createProject("discount-review-project", projectRoot.toString(), "main");
-        String diffText = Files.readString(Path.of("docs/benchmarks/code-review/fixtures/missing-test.diff"));
+        String diffText = readTestResource("code-review/fixtures/missing-test.diff");
         llmClient.nextResponse("""
                 {
                   "score": 3.0,
@@ -584,6 +585,13 @@ class Mvp2AiCodeReviewTests {
                 .first()
                 .satisfies(event -> assertThat(event.path("outputSummary").asText())
                         .contains("0 issues retained, 1 downgraded, 1 by prior feedback"));
+    }
+
+    private String readTestResource(String resourcePath) throws IOException {
+        try (var input = Mvp2AiCodeReviewTests.class.getClassLoader().getResourceAsStream(resourcePath)) {
+            assertThat(input).as("test resource %s", resourcePath).isNotNull();
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
     private void createReviewFixture(Path root) throws IOException {

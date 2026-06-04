@@ -1,0 +1,16 @@
+diff --git a/src/main/java/com/acme/pricing/DiscountService.java b/src/main/java/com/acme/pricing/DiscountService.java
+index 1a2b3c4..5d6e7f8 100644
+--- a/src/main/java/com/acme/pricing/DiscountService.java
++++ b/src/main/java/com/acme/pricing/DiscountService.java
+@@ -20,7 +20,12 @@ public class DiscountService {
+     public BigDecimal calculate(BigDecimal price, Customer customer) {
+-        return price;
++        if (customer.isVip()) {
++            return price.multiply(new BigDecimal("0.85"));
++        }
++        if (price.compareTo(new BigDecimal("1000")) > 0) {
++            return price.multiply(new BigDecimal("0.90"));
++        }
++        return price;
+     }
+ }
