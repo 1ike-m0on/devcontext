@@ -1,5 +1,7 @@
 package com.devcontext.domain.knowledge;
 
+import java.util.List;
+
 public record KnowledgeSearchResult(
         Long chunkId,
         Long documentId,
@@ -11,6 +13,7 @@ public record KnowledgeSearchResult(
         String content,
         double keywordScore,
         double vectorScore,
-        double fusedScore
+        double fusedScore,
+        List<KnowledgeEvidenceType> evidenceTypes
 ) {
 }

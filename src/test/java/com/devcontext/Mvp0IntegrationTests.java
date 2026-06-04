@@ -20,8 +20,19 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest(properties = "spring.datasource.url=jdbc:sqlite:target/devcontext-test.sqlite")
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:sqlite:target/devcontext-test.sqlite",
+        "devcontext.llm.provider=mock"
+})
 class Mvp0IntegrationTests {
+
+    static {
+        try {
+            Files.deleteIfExists(Path.of("target/devcontext-test.sqlite"));
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
 
     @Autowired
     private ProjectApplicationService projectService;
@@ -79,5 +90,15 @@ class Mvp0IntegrationTests {
                 "LLM_CALLED",
                 "RUN_FINISHED"
         );
+
+        Project updated = projectService.updateProject(project.id(), "renamed-mvp0-project", projectRoot.toString(), "develop");
+        assertThat(updated.name()).isEqualTo("renamed-mvp0-project");
+        assertThat(updated.defaultBranch()).isEqualTo("develop");
+        assertThat(projectService.getProject(project.id()).name()).isEqualTo("renamed-mvp0-project");
+
+        projectService.deleteProject(project.id());
+        assertThat(projectService.listProjects())
+                .extracting(Project::id)
+                .doesNotContain(project.id());
     }
 }

@@ -23,9 +23,16 @@ public class GitDiffReviewContextProvider implements ReviewContextProvider {
                 Changed files:
                 %s
 
+                Diff truncated by DevContext:
+                %s
+
                 Diff:
                 %s
-                """.formatted(String.join(System.lineSeparator(), request.diff().changedFiles()), request.diff().text());
+                """.formatted(
+                String.join(System.lineSeparator(), request.diff().changedFiles()),
+                request.diff().truncated() ? "yes" : "no",
+                request.diff().text()
+        );
         return List.of(new ContextItem(
                 null,
                 null,

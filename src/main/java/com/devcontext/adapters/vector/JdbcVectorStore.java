@@ -13,12 +13,16 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@ConditionalOnProperty(name = "devcontext.vector.provider", havingValue = "jdbc", matchIfMissing = true)
 public class JdbcVectorStore implements VectorStore {
 
     private static final TypeReference<List<Double>> DOUBLE_LIST = new TypeReference<>() {
+    };
+    private static final TypeReference<Map<String, Object>> METADATA_MAP = new TypeReference<>() {
     };
 
     private final JdbcTemplate jdbcTemplate;
@@ -66,17 +70,26 @@ public class JdbcVectorStore implements VectorStore {
     public List<VectorSearchHit> search(VectorQuery query) {
         List<VectorRow> rows = query.sourceId() == null
                 ? jdbcTemplate.query("""
-                        SELECT vector_id, embedding_json
+                        SELECT vector_id, embedding_json, metadata_json
                         FROM vector_document
                         WHERE collection = ?
-                        """, (rs, rowNum) -> new VectorRow(rs.getString("vector_id"), readVector(rs.getString("embedding_json"))), query.collection())
+                        """, (rs, rowNum) -> new VectorRow(
+                        rs.getString("vector_id"),
+                        readVector(rs.getString("embedding_json")),
+                        readMetadata(rs.getString("metadata_json"))
+                ), query.collection())
                 : jdbcTemplate.query("""
-                        SELECT vector_id, embedding_json
+                        SELECT vector_id, embedding_json, metadata_json
                         FROM vector_document
                         WHERE collection = ? AND source_id = ?
-                        """, (rs, rowNum) -> new VectorRow(rs.getString("vector_id"), readVector(rs.getString("embedding_json"))), query.collection(), query.sourceId());
+                        """, (rs, rowNum) -> new VectorRow(
+                        rs.getString("vector_id"),
+                        readVector(rs.getString("embedding_json")),
+                        readMetadata(rs.getString("metadata_json"))
+                ), query.collection(), query.sourceId());
 
         return rows.stream()
+                .filter(row -> matchesFilters(row.metadata(), query.filters()))
                 .map(row -> new VectorSearchHit(row.vectorId(), cosine(query.embedding(), row.embedding())))
                 .filter(hit -> hit.score() > 0)
                 .sorted(Comparator.comparingDouble(VectorSearchHit::score).reversed())
@@ -123,6 +136,44 @@ public class JdbcVectorStore implements VectorStore {
         }
     }
 
-    private record VectorRow(String vectorId, EmbeddingVector embedding) {
+    private Map<String, Object> readMetadata(String json) {
+        try {
+            return objectMapper.readValue(json, METADATA_MAP);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to parse vector metadata", e);
+        }
+    }
+
+    private boolean matchesFilters(Map<String, Object> metadata, Map<String, Object> filters) {
+        if (filters == null || filters.isEmpty()) {
+            return true;
+        }
+        for (Map.Entry<String, Object> filter : filters.entrySet()) {
+            if (!matchesFilter(metadata.get(filter.getKey()), filter.getValue())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean matchesFilter(Object actual, Object expected) {
+        if (expected == null) {
+            return true;
+        }
+        if (actual == null) {
+            return false;
+        }
+        if (expected instanceof Iterable<?> values) {
+            for (Object value : values) {
+                if (String.valueOf(actual).equals(String.valueOf(value))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return String.valueOf(actual).equals(String.valueOf(expected));
+    }
+
+    private record VectorRow(String vectorId, EmbeddingVector embedding, Map<String, Object> metadata) {
     }
 }

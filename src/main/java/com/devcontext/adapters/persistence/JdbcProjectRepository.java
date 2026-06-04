@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class JdbcProjectRepository implements ProjectRepository {
@@ -63,6 +64,23 @@ public class JdbcProjectRepository implements ProjectRepository {
     }
 
     @Override
+    public Project update(Project project) {
+        jdbcTemplate.update("""
+                UPDATE project
+                SET name = ?, root_path = ?, language = ?, framework = ?, default_branch = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                project.name(),
+                project.rootPath(),
+                project.language(),
+                project.framework(),
+                project.defaultBranch(),
+                project.updatedAt().toString(),
+                project.id());
+        return project;
+    }
+
+    @Override
     public Optional<Project> findById(Long id) {
         List<Project> projects = jdbcTemplate.query("SELECT * FROM project WHERE id = ?", rowMapper, id);
         return projects.stream().findFirst();
@@ -72,5 +90,22 @@ public class JdbcProjectRepository implements ProjectRepository {
     public List<Project> findAll() {
         return jdbcTemplate.query("SELECT * FROM project ORDER BY id DESC", rowMapper);
     }
-}
 
+    @Override
+    @Transactional
+    public void deleteById(Long id) {
+        jdbcTemplate.update("""
+                DELETE FROM review_issue
+                WHERE review_id IN (SELECT id FROM review_record WHERE project_id = ?)
+                """, id);
+        jdbcTemplate.update("DELETE FROM review_record WHERE project_id = ?", id);
+        jdbcTemplate.update("DELETE FROM decision_reuse_record WHERE project_id = ?", id);
+        jdbcTemplate.update("DELETE FROM decision_card WHERE project_id = ?", id);
+        jdbcTemplate.update("DELETE FROM retrieval_record WHERE run_id IN (SELECT id FROM agent_run WHERE project_id = ?)", id);
+        jdbcTemplate.update("DELETE FROM agent_event WHERE run_id IN (SELECT id FROM agent_run WHERE project_id = ?)", id);
+        jdbcTemplate.update("DELETE FROM agent_run WHERE project_id = ?", id);
+        jdbcTemplate.update("DELETE FROM context_item WHERE project_id = ?", id);
+        jdbcTemplate.update("DELETE FROM context_document WHERE project_id = ?", id);
+        jdbcTemplate.update("DELETE FROM project WHERE id = ?", id);
+    }
+}

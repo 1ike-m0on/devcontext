@@ -10,6 +10,9 @@ import com.devcontext.domain.llm.LlmResponse;
 import com.devcontext.ports.llm.LlmClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +31,14 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @Import(Mvp3DecisionMemoryTests.TestLlmConfig.class)
 class Mvp3DecisionMemoryTests {
+
+    static {
+        try {
+            Files.deleteIfExists(Path.of("target/devcontext-mvp3-test.sqlite"));
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
 
     @Autowired
     private MockMvc mockMvc;

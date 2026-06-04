@@ -4,6 +4,7 @@ import java.util.List;
 
 public record ProjectContextStatus(
         Long projectId,
-        List<ContextDocumentStatus> documents
+        List<ContextDocumentStatus> documents,
+        ContextQualitySummary quality
 ) {
 }

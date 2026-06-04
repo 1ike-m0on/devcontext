@@ -95,6 +95,20 @@ public class JdbcReviewIssueRepository implements ReviewIssueRepository {
     }
 
     @Override
+    public List<ReviewIssue> findRecentFeedbackByProjectId(Long projectId, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 30));
+        return jdbcTemplate.query("""
+                SELECT i.*
+                FROM review_issue i
+                JOIN review_record r ON r.id = i.review_id
+                WHERE r.project_id = ?
+                  AND i.status IN ('accepted', 'fixed', 'false_positive', 'rejected')
+                ORDER BY i.updated_at DESC, i.id DESC
+                LIMIT ?
+                """, rowMapper, projectId, safeLimit);
+    }
+
+    @Override
     public ReviewIssue updateStatus(Long issueId, String status, String note) {
         jdbcTemplate.update("""
                 UPDATE review_issue

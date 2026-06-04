@@ -38,6 +38,9 @@ public class LocalProjectScanner implements ProjectScanner {
     );
     private static final Pattern PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([\\w.]+)\\s*;");
     private static final Pattern METHOD_PATTERN = Pattern.compile("\\b(public|protected|private)\\s+[^=;{}]+\\s+(\\w+)\\s*\\(");
+    private static final Pattern FIELD_DEPENDENCY_PATTERN = Pattern.compile("(?m)^\\s*(?:@\\w+(?:\\([^\\n]*\\))?\\s*)*(?:private|protected|public)\\s+(?:final\\s+)?([A-Z][\\w.$]*(?:<[^;]+>)?)\\s+\\w+\\s*(?:=[^;]*)?;");
+    private static final Pattern MAPPING_PATTERN = Pattern.compile("@(RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping)\\s*(?:\\(([^)]*)\\))?");
+    private static final Pattern CLASS_PATTERN = Pattern.compile("\\bclass\\s+(\\w+)\\b");
 
     @Override
     public ProjectScan scan(String rootPath) {
@@ -52,7 +55,7 @@ public class LocalProjectScanner implements ProjectScanner {
         boolean hasCargo = Files.exists(root.resolve("Cargo.toml"));
         boolean springBoot = pomContent.contains("spring-boot-starter") || containsSpringBootApplication(root);
 
-        Map<String, String> commands = detectCommands(hasPom, hasGradle, hasPackageJson, hasPyproject, hasRequirements, hasGoMod, hasCargo);
+        Map<String, String> commands = detectCommands(root, hasPom, hasGradle, hasPackageJson, hasPyproject, hasRequirements, hasGoMod, hasCargo);
         List<String> docs = findDocs(root);
         List<String> todos = buildTodos(root, commands, springBoot, docs);
 
@@ -172,7 +175,16 @@ public class LocalProjectScanner implements ProjectScanner {
                 .limit(20)
                 .toList();
         List<String> methods = extractMethods(content);
-        return new ScannedJavaFile(relative(root, file), packageName, className, annotations, methods);
+        return new ScannedJavaFile(
+                relative(root, file),
+                packageName,
+                className,
+                annotations,
+                methods,
+                extractEndpoints(content),
+                extractDependencies(content),
+                detectTechnologies(content)
+        );
     }
 
     private List<String> extractMethods(String content) {
@@ -187,6 +199,156 @@ public class LocalProjectScanner implements ProjectScanner {
         return methods.stream().distinct().toList();
     }
 
+    private List<String> extractEndpoints(String content) {
+        List<String> endpoints = new ArrayList<>();
+        List<String> pendingMappings = new ArrayList<>();
+        String classPath = "";
+        for (String rawLine : content.lines().toList()) {
+            String line = rawLine.trim();
+            Matcher mappingMatcher = MAPPING_PATTERN.matcher(line);
+            while (mappingMatcher.find()) {
+                pendingMappings.add(mappingMatcher.group(1) + " " + extractMappingPath(mappingMatcher.group(2)));
+            }
+
+            if (CLASS_PATTERN.matcher(line).find()) {
+                classPath = firstMappingPath(pendingMappings);
+                pendingMappings.clear();
+                continue;
+            }
+
+            Matcher methodMatcher = METHOD_PATTERN.matcher(line);
+            if (methodMatcher.find()) {
+                for (String mapping : pendingMappings) {
+                    String[] parts = mapping.split(" ", 2);
+                    String httpMethod = httpMethod(parts[0]);
+                    String methodPath = parts.length > 1 ? parts[1] : "";
+                    endpoints.add(httpMethod + " " + normalizeEndpointPath(classPath, methodPath) + " -> " + methodMatcher.group(2));
+                }
+                pendingMappings.clear();
+            }
+        }
+        return endpoints.stream().distinct().limit(30).toList();
+    }
+
+    private String firstMappingPath(List<String> mappings) {
+        return mappings.stream()
+                .map(mapping -> mapping.split(" ", 2))
+                .filter(parts -> parts.length > 1)
+                .map(parts -> parts[1])
+                .filter(path -> !path.isBlank())
+                .findFirst()
+                .orElse("");
+    }
+
+    private String extractMappingPath(String annotationArguments) {
+        if (annotationArguments == null || annotationArguments.isBlank()) {
+            return "";
+        }
+        Matcher quoted = Pattern.compile("\"([^\"]*)\"").matcher(annotationArguments);
+        if (quoted.find()) {
+            return quoted.group(1);
+        }
+        return "";
+    }
+
+    private String httpMethod(String mappingAnnotation) {
+        return switch (mappingAnnotation) {
+            case "GetMapping" -> "GET";
+            case "PostMapping" -> "POST";
+            case "PutMapping" -> "PUT";
+            case "DeleteMapping" -> "DELETE";
+            case "PatchMapping" -> "PATCH";
+            default -> "ANY";
+        };
+    }
+
+    private String normalizeEndpointPath(String classPath, String methodPath) {
+        String combined = ("/" + stripSlashes(classPath) + "/" + stripSlashes(methodPath))
+                .replaceAll("/{2,}", "/");
+        if (combined.length() > 1 && combined.endsWith("/")) {
+            return combined.substring(0, combined.length() - 1);
+        }
+        return combined;
+    }
+
+    private String stripSlashes(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return value.replaceAll("^/+", "").replaceAll("/+$", "");
+    }
+
+    private List<String> extractDependencies(String content) {
+        List<String> dependencies = new ArrayList<>();
+        Matcher matcher = FIELD_DEPENDENCY_PATTERN.matcher(content);
+        while (matcher.find() && dependencies.size() < 30) {
+            dependencies.add(simpleTypeName(matcher.group(1)));
+        }
+        return dependencies.stream()
+                .filter(value -> !value.isBlank())
+                .filter(this::isLikelyDependencyType)
+                .distinct()
+                .toList();
+    }
+
+    private String simpleTypeName(String value) {
+        String cleaned = value.replaceAll("<.*>", "").trim();
+        int lastDot = cleaned.lastIndexOf('.');
+        if (lastDot >= 0) {
+            cleaned = cleaned.substring(lastDot + 1);
+        }
+        return cleaned;
+    }
+
+    private boolean isLikelyDependencyType(String value) {
+        return !List.of(
+                "String",
+                "Integer",
+                "Long",
+                "Double",
+                "Float",
+                "Boolean",
+                "BigDecimal",
+                "BigInteger",
+                "LocalDate",
+                "LocalDateTime",
+                "Instant",
+                "List",
+                "Map",
+                "Set",
+                "Optional"
+        ).contains(value);
+    }
+
+    private List<String> detectTechnologies(String content) {
+        List<String> technologies = new ArrayList<>();
+        if (content.contains("StringRedisTemplate") || content.contains("RedisTemplate")) {
+            technologies.add("Redis");
+        }
+        if (content.contains("DefaultRedisScript") || content.toLowerCase().contains("lua")) {
+            technologies.add("Redis Lua");
+        }
+        if (content.contains("RocketMQ") || content.contains("RocketMQTemplate") || content.contains("RocketMQListener")) {
+            technologies.add("RocketMQ");
+        }
+        if (content.contains("MeterRegistry") || content.contains("Counter.builder") || content.contains("Gauge.builder")) {
+            technologies.add("Micrometer metrics");
+        }
+        if (content.contains("Caffeine") || content.contains("Cache<")) {
+            technologies.add("Caffeine");
+        }
+        if (content.contains("com.baomidou.mybatisplus")) {
+            technologies.add("MyBatis-Plus");
+        }
+        if (content.contains("@Scheduled")) {
+            technologies.add("Spring Scheduler");
+        }
+        if (content.contains("@Transactional")) {
+            technologies.add("Spring Transaction");
+        }
+        return technologies.stream().distinct().toList();
+    }
+
     private List<String> existingPaths(Path root, String... candidates) {
         List<String> paths = new ArrayList<>();
         for (String candidate : candidates) {
@@ -198,6 +360,7 @@ public class LocalProjectScanner implements ProjectScanner {
     }
 
     private Map<String, String> detectCommands(
+            Path root,
             boolean hasPom,
             boolean hasGradle,
             boolean hasPackageJson,
@@ -207,37 +370,36 @@ public class LocalProjectScanner implements ProjectScanner {
             boolean hasCargo
     ) {
         Map<String, String> commands = new LinkedHashMap<>();
+        if (Files.exists(root.resolve("compose.yaml")) || Files.exists(root.resolve("docker-compose.yml"))) {
+            commands.put("docker-start", "docker compose up -d --build");
+            commands.put("docker-stop", "docker compose down");
+            commands.put("docker-reset", "docker compose down -v");
+        }
         if (hasPom) {
             commands.put("build", "mvn clean package");
             commands.put("test", "mvn test");
-            commands.put("run", "mvn spring-boot:run");
-            return commands;
-        }
-        if (hasGradle) {
+            commands.putIfAbsent("run", "mvn spring-boot:run");
+        } else if (hasGradle) {
             commands.put("build", "./gradlew build");
             commands.put("test", "./gradlew test");
-            commands.put("run", "./gradlew bootRun");
-            return commands;
-        }
-        if (hasPackageJson) {
+            commands.putIfAbsent("run", "./gradlew bootRun");
+        } else if (hasPackageJson) {
             commands.put("install", "npm install");
             commands.put("test", "npm test");
-            commands.put("run", "npm run dev");
-            return commands;
-        }
-        if (hasPyproject || hasRequirements) {
+            commands.putIfAbsent("run", "npm run dev");
+        } else if (hasPyproject || hasRequirements) {
             commands.put("test", "pytest");
-            commands.put("run", "python -m app");
-            return commands;
-        }
-        if (hasGoMod) {
+            commands.putIfAbsent("run", "python -m app");
+        } else if (hasGoMod) {
             commands.put("build", "go build ./...");
             commands.put("test", "go test ./...");
-            return commands;
-        }
-        if (hasCargo) {
+        } else if (hasCargo) {
             commands.put("build", "cargo build");
             commands.put("test", "cargo test");
+        }
+        if (Files.exists(root.resolve("frontend/package.json"))) {
+            commands.put("frontend-install", "cd frontend && npm install");
+            commands.put("frontend-dev", "cd frontend && npm run dev");
         }
         return commands;
     }

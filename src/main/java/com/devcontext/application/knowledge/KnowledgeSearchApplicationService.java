@@ -4,6 +4,8 @@ import com.devcontext.common.error.ApiException;
 import com.devcontext.domain.knowledge.EmbeddingVector;
 import com.devcontext.domain.knowledge.KeywordSearchHit;
 import com.devcontext.domain.knowledge.KnowledgeChunkView;
+import com.devcontext.domain.knowledge.KnowledgeEvidenceType;
+import com.devcontext.domain.knowledge.KnowledgeQueryPlan;
 import com.devcontext.domain.knowledge.KnowledgeSearchResponse;
 import com.devcontext.domain.knowledge.KnowledgeSearchResult;
 import com.devcontext.domain.knowledge.RetrievalRecord;
@@ -35,6 +37,8 @@ public class KnowledgeSearchApplicationService {
     private final VectorStore vectorStore;
     private final KnowledgeChunkRepository chunkRepository;
     private final RetrievalRecordRepository retrievalRecordRepository;
+    private final KnowledgeQueryPlanner queryPlanner;
+    private final KnowledgeEvidenceClassifier evidenceClassifier;
     private final ObjectMapper objectMapper;
 
     public KnowledgeSearchApplicationService(
@@ -43,6 +47,8 @@ public class KnowledgeSearchApplicationService {
             VectorStore vectorStore,
             KnowledgeChunkRepository chunkRepository,
             RetrievalRecordRepository retrievalRecordRepository,
+            KnowledgeQueryPlanner queryPlanner,
+            KnowledgeEvidenceClassifier evidenceClassifier,
             ObjectMapper objectMapper
     ) {
         this.keywordSearchEngine = keywordSearchEngine;
@@ -50,6 +56,8 @@ public class KnowledgeSearchApplicationService {
         this.vectorStore = vectorStore;
         this.chunkRepository = chunkRepository;
         this.retrievalRecordRepository = retrievalRecordRepository;
+        this.queryPlanner = queryPlanner;
+        this.evidenceClassifier = evidenceClassifier;
         this.objectMapper = objectMapper;
     }
 
@@ -59,7 +67,8 @@ public class KnowledgeSearchApplicationService {
 
     public KnowledgeSearchResponse search(KnowledgeSearchCommand command, Long runId) {
         String query = requireQuery(command.query());
-        String rewrittenQuery = rewrite(query);
+        KnowledgeQueryPlan queryPlan = queryPlanner.plan(query);
+        String rewrittenQuery = queryPlan.rewrittenQuery();
         int topK = normalizeTopK(command.topK());
         int candidateLimit = Math.min(MAX_TOP_K * 4, Math.max(topK * 4, topK));
 
@@ -72,7 +81,7 @@ public class KnowledgeSearchApplicationService {
                 candidateLimit
         ));
 
-        List<KnowledgeSearchResult> results = fuse(keywordHits, vectorHits, topK);
+        List<KnowledgeSearchResult> results = fuse(keywordHits, vectorHits, topK, queryPlan);
         RetrievalRecord record = retrievalRecordRepository.save(new RetrievalRecord(
                 null,
                 runId,
@@ -82,10 +91,10 @@ public class KnowledgeSearchApplicationService {
                 writeJson(results),
                 Instant.now()
         ));
-        return new KnowledgeSearchResponse(record.id(), query, rewrittenQuery, results);
+        return new KnowledgeSearchResponse(record.id(), query, rewrittenQuery, queryPlan, results);
     }
 
-    private List<KnowledgeSearchResult> fuse(List<KeywordSearchHit> keywordHits, List<VectorSearchHit> vectorHits, int topK) {
+    private List<KnowledgeSearchResult> fuse(List<KeywordSearchHit> keywordHits, List<VectorSearchHit> vectorHits, int topK, KnowledgeQueryPlan queryPlan) {
         double maxKeywordScore = keywordHits.stream().mapToDouble(KeywordSearchHit::score).max().orElse(0);
         double maxVectorScore = vectorHits.stream().mapToDouble(VectorSearchHit::score).max().orElse(0);
         Map<Long, Double> keywordScores = new LinkedHashMap<>();
@@ -117,7 +126,7 @@ public class KnowledgeSearchApplicationService {
         }
 
         return candidates.values().stream()
-                .map(FusedCandidate::toResult)
+                .map(candidate -> candidate.toResult(queryPlan, evidenceClassifier))
                 .sorted(Comparator.comparingDouble(KnowledgeSearchResult::fusedScore).reversed())
                 .limit(topK)
                 .toList();
@@ -135,10 +144,6 @@ public class KnowledgeSearchApplicationService {
             throw new ApiException("KNOWLEDGE_QUERY_REQUIRED", "query is required", HttpStatus.BAD_REQUEST);
         }
         return query.trim();
-    }
-
-    private String rewrite(String query) {
-        return String.join(" ", query.trim().split("\\s+"));
     }
 
     private int normalizeTopK(Integer topK) {
@@ -169,8 +174,12 @@ public class KnowledgeSearchApplicationService {
             this.view = view;
         }
 
-        KnowledgeSearchResult toResult() {
-            double fusedScore = keywordScore * 0.55 + vectorScore * 0.45;
+        KnowledgeSearchResult toResult(KnowledgeQueryPlan queryPlan, KnowledgeEvidenceClassifier evidenceClassifier) {
+            List<KnowledgeEvidenceType> evidenceTypes = evidenceClassifier.classify(view);
+            double fusedScore = keywordScore * 0.55
+                    + vectorScore * 0.45
+                    + evidenceBoost(queryPlan, evidenceTypes, view)
+                    - genericDocPenalty(queryPlan, evidenceTypes, view);
             return new KnowledgeSearchResult(
                     view.chunk().id(),
                     view.document().id(),
@@ -182,8 +191,62 @@ public class KnowledgeSearchApplicationService {
                     view.chunk().content(),
                     keywordScore,
                     vectorScore,
-                    fusedScore
+                    fusedScore,
+                    evidenceTypes
             );
+        }
+
+        private double evidenceBoost(KnowledgeQueryPlan queryPlan, List<KnowledgeEvidenceType> evidenceTypes, KnowledgeChunkView view) {
+            double boost = 0;
+            for (KnowledgeEvidenceType requiredType : queryPlan.requiredEvidenceTypes()) {
+                if (evidenceTypes.contains(requiredType)) {
+                    boost = Math.max(boost, 0.55);
+                }
+            }
+            List<KnowledgeEvidenceType> preferred = queryPlan.preferredEvidenceTypes();
+            for (int i = 0; i < preferred.size(); i++) {
+                KnowledgeEvidenceType preferredType = preferred.get(i);
+                if (evidenceTypes.contains(preferredType)) {
+                    boost = Math.max(boost, Math.max(0.12, 0.40 - i * 0.05));
+                }
+            }
+            if (evidenceTypes.contains(KnowledgeEvidenceType.CODE_MAP) && queryPlan.preferredEvidenceTypes().contains(KnowledgeEvidenceType.CODE_MAP)) {
+                boost = Math.max(boost, 0.25);
+            }
+            return boost + specificEvidencePathBoost(view, evidenceTypes);
+        }
+
+        private double specificEvidencePathBoost(KnowledgeChunkView view, List<KnowledgeEvidenceType> evidenceTypes) {
+            String path = view.document().filePath().toLowerCase(java.util.Locale.ROOT);
+            if (evidenceTypes.contains(KnowledgeEvidenceType.SQL_SCHEMA) && path.endsWith(".sql")) {
+                return 0.08;
+            }
+            if (evidenceTypes.contains(KnowledgeEvidenceType.CACHE) && path.endsWith(".lua")) {
+                return 0.08;
+            }
+            if (evidenceTypes.contains(KnowledgeEvidenceType.OBSERVABILITY)
+                    && (path.contains("prometheus") || path.contains("grafana") || path.contains("metrics"))) {
+                return 0.08;
+            }
+            return 0;
+        }
+
+        private double genericDocPenalty(KnowledgeQueryPlan queryPlan, List<KnowledgeEvidenceType> evidenceTypes, KnowledgeChunkView view) {
+            if (queryPlan.preferredEvidenceTypes().isEmpty()) {
+                return 0;
+            }
+            boolean matchesPreferred = evidenceTypes.stream().anyMatch(queryPlan.preferredEvidenceTypes()::contains);
+            if (matchesPreferred) {
+                return todoPenalty(view);
+            }
+            boolean onlyGenericDoc = evidenceTypes.stream().allMatch(type ->
+                    type == KnowledgeEvidenceType.GENERATED_DOC || type == KnowledgeEvidenceType.MANUAL_DOC);
+            return onlyGenericDoc ? 0.20 + todoPenalty(view) : todoPenalty(view);
+        }
+
+        private double todoPenalty(KnowledgeChunkView view) {
+            String text = (view.chunk().headingPath() + "\n" + view.chunk().content()).toLowerCase(java.util.Locale.ROOT);
+            return text.contains("todo") || text.contains("待补充") ? 0.12 : 0;
         }
     }
 }

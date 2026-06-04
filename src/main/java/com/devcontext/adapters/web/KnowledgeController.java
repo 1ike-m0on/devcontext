@@ -7,6 +7,7 @@ import com.devcontext.application.knowledge.KnowledgeSearchCommand;
 import com.devcontext.application.knowledge.RagAnswerApplicationService;
 import com.devcontext.application.knowledge.RagAskCommand;
 import com.devcontext.common.api.ApiResponse;
+import com.devcontext.domain.knowledge.EvidenceCoverageReport;
 import com.devcontext.domain.knowledge.KnowledgeIndexResult;
 import com.devcontext.domain.knowledge.KnowledgeRunDetail;
 import com.devcontext.domain.knowledge.KnowledgeSearchResponse;
@@ -53,6 +54,11 @@ public class KnowledgeController {
     @PostMapping("/api/knowledge-sources/{sourceId}/index")
     public ApiResponse<KnowledgeIndexResult> indexSource(@PathVariable Long sourceId) {
         return ApiResponse.ok(indexService.indexSource(sourceId));
+    }
+
+    @GetMapping("/api/knowledge-sources/{sourceId}/coverage")
+    public ApiResponse<EvidenceCoverageReport> coverage(@PathVariable Long sourceId) {
+        return ApiResponse.ok(indexService.coverage(sourceId));
     }
 
     @PostMapping("/api/knowledge/search")

@@ -7,6 +7,6 @@ public record VectorDocument(
         String collection,
         Long sourceId,
         EmbeddingVector embedding,
-        Map<String, String> metadata
+        Map<String, Object> metadata
 ) {
 }

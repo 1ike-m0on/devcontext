@@ -33,6 +33,50 @@ public class KnowledgeIndexApplicationService {
 
     public static final String VECTOR_COLLECTION = "knowledge_chunk";
     private static final Set<String> VALID_SOURCE_TYPES = Set.of("markdown_dir", "project_ai_docs");
+    private static final long MAX_INDEX_FILE_BYTES = 180_000;
+    private static final Set<String> IGNORED_PATH_PREFIXES = Set.of(
+            ".git/",
+            ".gradle/",
+            ".idea/",
+            ".vscode/",
+            "build/",
+            "coverage/",
+            "data/",
+            "dist/",
+            "logs/",
+            "node_modules/",
+            "out/",
+            "target/"
+    );
+    private static final Set<String> AI_DOC_EXTENSIONS = Set.of(".md", ".txt", ".json");
+    private static final Set<String> PROJECT_DOC_EXTENSIONS = Set.of(".md", ".txt");
+    private static final Set<String> PROJECT_RESOURCE_EXTENSIONS = Set.of(".sql", ".xml", ".lua", ".yml", ".yaml", ".properties");
+    private static final Set<String> PROJECT_CODE_EXTENSIONS = Set.of(".java", ".kt", ".kts", ".ts", ".tsx", ".js", ".jsx");
+    private static final Set<String> PROJECT_ROOT_DOC_NAMES = Set.of(
+            "benchmark.md",
+            "deployment.md",
+            "docker.md",
+            "observability.md",
+            "readme.md"
+    );
+    private static final Set<String> PROJECT_CODE_KEYWORDS = Set.of(
+            "actuator",
+            "controller",
+            "dao",
+            "database",
+            "entity",
+            "index",
+            "mapper",
+            "metrics",
+            "micrometer",
+            "migration",
+            "monitor",
+            "observability",
+            "repository",
+            "schema",
+            "service",
+            "table"
+    );
 
     private final KnowledgeSourceRepository sourceRepository;
     private final KnowledgeDocumentRepository documentRepository;
@@ -40,6 +84,7 @@ public class KnowledgeIndexApplicationService {
     private final EmbeddingClient embeddingClient;
     private final VectorStore vectorStore;
     private final MarkdownChunker chunker;
+    private final KnowledgeCoverageService coverageService;
 
     public KnowledgeIndexApplicationService(
             KnowledgeSourceRepository sourceRepository,
@@ -47,7 +92,8 @@ public class KnowledgeIndexApplicationService {
             KnowledgeChunkRepository chunkRepository,
             EmbeddingClient embeddingClient,
             VectorStore vectorStore,
-            MarkdownChunker chunker
+            MarkdownChunker chunker,
+            KnowledgeCoverageService coverageService
     ) {
         this.sourceRepository = sourceRepository;
         this.documentRepository = documentRepository;
@@ -55,6 +101,7 @@ public class KnowledgeIndexApplicationService {
         this.embeddingClient = embeddingClient;
         this.vectorStore = vectorStore;
         this.chunker = chunker;
+        this.coverageService = coverageService;
     }
 
     public KnowledgeSource createSource(CreateKnowledgeSourceCommand command) {
@@ -102,19 +149,20 @@ public class KnowledgeIndexApplicationService {
                 continue;
             }
             String relativePath = normalizePath(root.relativize(file));
+            String indexableContent = indexableContent(relativePath, content);
             KnowledgeDocument document = documentRepository.save(new KnowledgeDocument(
                     null,
                     sourceId,
                     relativePath,
-                    titleOf(file, content),
-                    sha256(content),
+                    titleOf(file, indexableContent),
+                    sha256(indexableContent),
                     "indexed",
                     now,
                     now,
                     now
             ));
             documentsIndexed++;
-            List<MarkdownChunker.MarkdownChunk> chunks = chunker.chunk(content);
+            List<MarkdownChunker.MarkdownChunk> chunks = chunker.chunk(indexableContent);
             for (int i = 0; i < chunks.size(); i++) {
                 MarkdownChunker.MarkdownChunk chunk = chunks.get(i);
                 String vectorId = vectorId(sourceId, relativePath, i, chunk.content());
@@ -136,7 +184,7 @@ public class KnowledgeIndexApplicationService {
                         VECTOR_COLLECTION,
                         sourceId,
                         embedding,
-                        Map.of(
+                        Map.<String, Object>of(
                                 "chunkId", String.valueOf(saved.id()),
                                 "documentId", String.valueOf(document.id()),
                                 "filePath", relativePath
@@ -154,7 +202,12 @@ public class KnowledgeIndexApplicationService {
                 source.createdAt(),
                 Instant.now()
         ));
-        return new KnowledgeIndexResult(sourceId, documentsIndexed, chunksIndexed);
+        return new KnowledgeIndexResult(sourceId, documentsIndexed, chunksIndexed, coverageService.buildReport(sourceId));
+    }
+
+    public com.devcontext.domain.knowledge.EvidenceCoverageReport coverage(Long sourceId) {
+        getSource(sourceId);
+        return coverageService.buildReport(sourceId);
     }
 
     public KnowledgeSource getSource(Long sourceId) {
@@ -176,24 +229,187 @@ public class KnowledgeIndexApplicationService {
 
     private boolean isAllowedPath(Path root, Path path, String sourceType) {
         String relative = normalizePath(root.relativize(path));
-        if (relative.startsWith(".git/") || relative.startsWith("target/")
-                || relative.startsWith("data/") || relative.startsWith("logs/")) {
-            return false;
-        }
         String lower = relative.toLowerCase(Locale.ROOT);
         if ("project_ai_docs".equals(sourceType)) {
-            boolean isAiDoc = relative.equals("AGENTS.md") || relative.startsWith(".ai/");
-            return isAiDoc && (lower.endsWith(".md") || lower.endsWith(".txt") || lower.endsWith(".json"));
+            if (isAiDoc(relative, lower)) {
+                return hasExtension(lower, AI_DOC_EXTENSIONS);
+            }
+            if (isIgnored(relative)) {
+                return false;
+            }
+            return isProjectEvidencePath(lower);
         }
-        return lower.endsWith(".md") || lower.endsWith(".txt");
+        if (isIgnored(relative)) {
+            return false;
+        }
+        return hasExtension(lower, PROJECT_DOC_EXTENSIONS);
     }
 
     private String readFile(Path file) {
         try {
+            if (Files.size(file) > MAX_INDEX_FILE_BYTES) {
+                return "";
+            }
             return Files.readString(file, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new ApiException("KNOWLEDGE_INDEX_FAILED", "Failed to read knowledge document: " + file, HttpStatus.BAD_REQUEST);
         }
+    }
+
+    private boolean isAiDoc(String relative, String lower) {
+        return relative.equals("AGENTS.md") || lower.equals("agents.md") || lower.startsWith(".ai/");
+    }
+
+    private boolean isIgnored(String relative) {
+        String lower = relative.toLowerCase(Locale.ROOT);
+        return IGNORED_PATH_PREFIXES.stream().anyMatch(lower::startsWith);
+    }
+
+    private boolean isProjectEvidencePath(String lower) {
+        if (hasExtension(lower, PROJECT_DOC_EXTENSIONS)) {
+            return lower.startsWith("docs/")
+                    || lower.startsWith("deploy/")
+                    || PROJECT_ROOT_DOC_NAMES.contains(fileName(lower))
+                    || lower.endsWith("/readme.md");
+        }
+        if (lower.endsWith(".json")) {
+            return isObservabilityPath(lower);
+        }
+        if (isComposeFile(lower)) {
+            return true;
+        }
+        if (lower.endsWith(".sql")) {
+            return true;
+        }
+        if (lower.endsWith(".lua")) {
+            return lower.startsWith("src/main/resources/")
+                    || lower.startsWith("scripts/")
+                    || lower.contains("/lua/")
+                    || lower.contains("/script/")
+                    || lower.contains("/scripts/");
+        }
+        if (lower.endsWith(".xml")) {
+            return lower.startsWith("src/main/resources/")
+                    || lower.contains("/mapper/")
+                    || lower.contains("/mybatis/")
+                    || lower.contains("/database/");
+        }
+        if (hasExtension(lower, PROJECT_RESOURCE_EXTENSIONS)) {
+            return lower.startsWith("src/main/resources/")
+                    || lower.startsWith("config/")
+                    || lower.startsWith("deploy/")
+                    || lower.contains("/db/")
+                    || lower.contains("/migration/")
+                    || lower.contains("/migrations/")
+                    || lower.contains("/monitoring/")
+                    || lower.contains("/schema/");
+        }
+        if (hasExtension(lower, PROJECT_CODE_EXTENSIONS)) {
+            return PROJECT_CODE_KEYWORDS.stream().anyMatch(lower::contains);
+        }
+        return false;
+    }
+
+    private boolean isComposeFile(String lower) {
+        return lower.equals("compose.yml")
+                || lower.equals("compose.yaml")
+                || lower.equals("docker-compose.yml")
+                || lower.equals("docker-compose.yaml")
+                || lower.endsWith("/compose.yml")
+                || lower.endsWith("/compose.yaml")
+                || lower.endsWith("/docker-compose.yml")
+                || lower.endsWith("/docker-compose.yaml");
+    }
+
+    private boolean isObservabilityPath(String lower) {
+        return lower.contains("monitoring")
+                || lower.contains("prometheus")
+                || lower.contains("grafana")
+                || lower.contains("metrics")
+                || lower.contains("micrometer")
+                || lower.contains("actuator")
+                || lower.contains("observability");
+    }
+
+    private String fileName(String lower) {
+        int slash = lower.lastIndexOf('/');
+        return slash >= 0 ? lower.substring(slash + 1) : lower;
+    }
+
+    private boolean hasExtension(String lower, Set<String> extensions) {
+        return extensions.stream().anyMatch(lower::endsWith);
+    }
+
+    private String indexableContent(String relativePath, String content) {
+        String lower = relativePath.toLowerCase(Locale.ROOT);
+        if (hasExtension(lower, PROJECT_DOC_EXTENSIONS)) {
+            return content;
+        }
+        return "# " + relativePath + "\n\n"
+                + "File: " + relativePath + "\n"
+                + "Type: " + sourceKind(lower) + "\n\n"
+                + "```" + codeFenceLanguage(lower) + "\n"
+                + content.trim() + "\n"
+                + "```\n";
+    }
+
+    private String sourceKind(String lower) {
+        if (lower.endsWith(".sql")) {
+            return "SQL database schema or migration";
+        }
+        if (lower.endsWith(".xml")) {
+            return "XML mapper or configuration";
+        }
+        if (lower.endsWith(".lua")) {
+            return "Lua script or Redis script";
+        }
+        if (lower.endsWith(".yml") || lower.endsWith(".yaml") || lower.endsWith(".properties")) {
+            return "application configuration";
+        }
+        if (lower.endsWith(".java") || lower.endsWith(".kt") || lower.endsWith(".kts")) {
+            return "backend source code";
+        }
+        if (lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".js") || lower.endsWith(".jsx")) {
+            return "frontend source code";
+        }
+        if (lower.endsWith(".json")) {
+            return "structured project metadata";
+        }
+        return "project evidence";
+    }
+
+    private String codeFenceLanguage(String lower) {
+        if (lower.endsWith(".sql")) {
+            return "sql";
+        }
+        if (lower.endsWith(".xml")) {
+            return "xml";
+        }
+        if (lower.endsWith(".lua")) {
+            return "lua";
+        }
+        if (lower.endsWith(".yml") || lower.endsWith(".yaml")) {
+            return "yaml";
+        }
+        if (lower.endsWith(".properties")) {
+            return "properties";
+        }
+        if (lower.endsWith(".java")) {
+            return "java";
+        }
+        if (lower.endsWith(".kt") || lower.endsWith(".kts")) {
+            return "kotlin";
+        }
+        if (lower.endsWith(".ts") || lower.endsWith(".tsx")) {
+            return "typescript";
+        }
+        if (lower.endsWith(".js") || lower.endsWith(".jsx")) {
+            return "javascript";
+        }
+        if (lower.endsWith(".json")) {
+            return "json";
+        }
+        return "";
     }
 
     private String titleOf(Path file, String content) {

@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DevContext</title>
+    <meta name="description" content="DevContext is a local AI development context workspace for code review, decision memory, RAG, and traceable agent runs.">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-frame">
+      <aside class="rail" aria-label="Workspace navigation">
+        <a class="brand" href="#home" aria-label="DevContext home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M5 7.5 12 3l7 4.5v9L12 21l-7-4.5z"></path>
+              <path d="M5 7.5 12 12l7-4.5"></path>
+              <path d="M12 12v9"></path>
+            </svg>
+          </span>
+          <span>
+            <strong>DevContext</strong>
+            <small>Local AI dev memory</small>
+          </span>
+        </a>
+
+        <nav class="rail-nav" aria-label="Primary">
+          <button class="nav-button active" type="button" data-panel="home">
+            <span class="nav-icon" aria-hidden="true">⌘</span>
+            Command
+          </button>
+          <button class="nav-button" type="button" data-panel="project">
+            <span class="nav-icon" aria-hidden="true">P</span>
+            Projects
+          </button>
+          <button class="nav-button" type="button" data-panel="review">
+            <span class="nav-icon" aria-hidden="true">R</span>
+            Review
+          </button>
+          <button class="nav-button" type="button" data-panel="decision">
+            <span class="nav-icon" aria-hidden="true">D</span>
+            Decisions
+          </button>
+          <button class="nav-button" type="button" data-panel="knowledge">
+            <span class="nav-icon" aria-hidden="true">K</span>
+            Knowledge
+          </button>
+          <button class="nav-button" type="button" data-panel="trace">
+            <span class="nav-icon" aria-hidden="true">T</span>
+            Trace
+          </button>
+        </nav>
+
+        <div class="rail-footer">
+          <div class="runtime-card">
+            <div class="status-line">
+              <span class="status-dot" id="healthDot"></span>
+              <span id="healthText">Checking service</span>
+            </div>
+            <div class="runtime-meta" id="llmChip">LLM unknown</div>
+            <div class="runtime-meta" id="vectorChip">Vector unknown</div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace-main" id="home">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">AI-native development workspace</p>
+            <h1>Review code with the project memory already attached.</h1>
+          </div>
+          <div class="topbar-actions">
+            <label class="project-select">
+              <span>Active project</span>
+              <select id="activeProjectSelect">
+                <option value="">No project selected</option>
+              </select>
+            </label>
+            <button class="icon-button" type="button" id="refreshButton" aria-label="Refresh workspace">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 6v5h-5"></path>
+                <path d="M4 18v-5h5"></path>
+                <path d="M18.5 9A7 7 0 0 0 6.7 5.8L4 8"></path>
+                <path d="M5.5 15a7 7 0 0 0 11.8 3.2L20 16"></path>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <section class="hero-grid" aria-label="Command workspace">
+          <div class="command-surface">
+            <div class="surface-header">
+              <div>
+                <h2>What do you want DevContext to do?</h2>
+                <p>Start from a review, a decision reuse question, or a project document search.</p>
+              </div>
+              <span class="model-pill" id="projectChip">0 projects</span>
+            </div>
+
+            <div class="mode-switch" role="tablist" aria-label="Command mode">
+              <button class="mode-button active" type="button" data-command-mode="review">Review diff</button>
+              <button class="mode-button" type="button" data-command-mode="decision">Recall decision</button>
+              <button class="mode-button" type="button" data-command-mode="knowledge">Ask docs</button>
+            </div>
+
+            <textarea id="heroIntent" spellcheck="false">Review this diff for null pointer, transaction, idempotency, cache, and test risks.</textarea>
+
+            <div class="command-footer">
+              <span id="commandHint">Routes to the Code Review workspace.</span>
+              <button class="primary-button" type="button" id="heroLaunchButton">Continue</button>
+            </div>
+          </div>
+
+          <div class="live-preview" aria-label="Product preview">
+            <div class="preview-toolbar">
+              <span class="window-dot"></span>
+              <span class="window-dot"></span>
+              <span class="window-dot"></span>
+              <strong>Agent run</strong>
+              <span>prompt v0.7</span>
+            </div>
+            <div class="preview-content">
+              <div class="code-window">
+                <div class="code-title">OrderService.java</div>
+                <code><span>+ </span>Order order = repository.findById(id);</code>
+                <code><span>+ </span>paymentClient.charge(request);</code>
+                <code><span>+ </span>return order.getTotal();</code>
+              </div>
+              <div class="preview-issue">
+                <span class="severity critical">critical</span>
+                <strong>Null dereference</strong>
+                <p>Matched known benchmark issue at line 18.</p>
+              </div>
+              <div class="preview-issue">
+                <span class="severity warning">warning</span>
+                <strong>Idempotency gap</strong>
+                <p>Decision memory suggests webhook retry protection.</p>
+              </div>
+              <div class="event-strip">
+                <span>RUN_STARTED</span>
+                <span>CONTEXT_ASSEMBLED</span>
+                <span>LLM_CALLED</span>
+                <span>REVIEW_SAVED</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="notice" id="notice" hidden></div>
+
+        <section class="panel-view active" id="panel-home" aria-label="Overview">
+          <div class="insight-grid">
+            <article class="insight-panel">
+              <span class="panel-kicker">Context</span>
+              <h3>Stop re-explaining the same project facts.</h3>
+              <p>Project docs, code maps, review rules, decision cards, and knowledge chunks sit in one reusable context stack.</p>
+            </article>
+            <article class="insight-panel">
+              <span class="panel-kicker">Review</span>
+              <h3>Turn AI output into structured issues.</h3>
+              <p>ReviewIssue records keep severity, location, confidence, status, and suggestions separate from raw model text.</p>
+            </article>
+            <article class="insight-panel">
+              <span class="panel-kicker">Trace</span>
+              <h3>Debug every AI workflow like code.</h3>
+              <p>AgentRun and AgentEvent logs show prompt version, context sources, model call, parser result, and feedback.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel-view" id="panel-project" aria-label="Project setup">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Project context</p>
+              <h2>Connect the repository before asking AI to reason about it.</h2>
+            </div>
+            <button class="secondary-button" type="button" id="reloadProjectsButton">Refresh projects</button>
+          </div>
+
+          <div class="content-grid two">
+            <form class="tool-panel" id="projectForm">
+              <div class="panel-title">
+                <h3>Register project</h3>
+                <button class="ghost-button" type="button" data-sample="project">Sample</button>
+              </div>
+              <label>
+                Name
+                <input name="name" autocomplete="off" placeholder="devcontext">
+              </label>
+              <label>
+                Root path
+                <input name="rootPath" autocomplete="off" placeholder="D:\CodeX\DevContext">
+              </label>
+              <label>
+                Default branch
+                <input name="defaultBranch" autocomplete="off" value="main">
+              </label>
+              <button class="primary-button" type="submit">Save project</button>
+            </form>
+
+            <div class="tool-panel">
+              <div class="panel-title">
+                <h3>Projects</h3>
+              </div>
+              <div class="list" id="projectList"></div>
+            </div>
+
+            <div class="tool-panel wide">
+              <div class="panel-title">
+                <h3>Context assets</h3>
+                <div class="inline-actions">
+                  <button class="secondary-button" type="button" id="contextStatusButton">Status</button>
+                  <button class="secondary-button" type="button" id="contextGenerateButton">Generate</button>
+                  <button class="secondary-button" type="button" id="contextItemsButton">Items</button>
+                </div>
+              </div>
+              <pre class="result-box" id="contextResult">Select a project, then inspect or rebuild context assets.</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-view" id="panel-review" aria-label="Code review">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">AI code review</p>
+              <h2>Submit a diff and keep the result as inspectable ReviewIssue data.</h2>
+            </div>
+            <button class="secondary-button" type="button" data-sample="review">Load sample diff</button>
+          </div>
+
+          <div class="content-grid">
+            <form class="tool-panel wide" id="reviewForm">
+              <div class="form-row">
+                <label>
+                  Base branch
+                  <input name="baseBranch" autocomplete="off" value="main">
+                </label>
+                <label>
+                  Compare branch
+                  <input name="compareBranch" autocomplete="off" placeholder="feature/payment-webhook">
+                </label>
+                <label>
+                  Mode
+                  <select name="mode">
+                    <option value="strict">strict</option>
+                    <option value="balanced">balanced</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Diff text
+                <textarea name="diffText" spellcheck="false" placeholder="Paste a Git diff or leave empty when branches are available."></textarea>
+              </label>
+              <button class="primary-button" type="submit">Run review</button>
+            </form>
+
+            <div class="tool-panel wide">
+              <div class="panel-title">
+                <h3>Review result</h3>
+                <div class="inline-actions">
+                  <input class="inline-input" id="reviewIdInput" placeholder="Review ID">
+                  <button class="secondary-button" type="button" id="loadReviewButton">Load</button>
+                </div>
+              </div>
+              <div class="issue-list" id="reviewResult">
+                <div class="empty-state">Structured review findings will appear here.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-view" id="panel-decision" aria-label="Decision memory">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Decision memory</p>
+              <h2>Recall historical engineering decisions before repeating a debate.</h2>
+            </div>
+            <button class="secondary-button" type="button" id="loadDecisionsButton">Refresh decisions</button>
+          </div>
+
+          <div class="content-grid two">
+            <form class="tool-panel" id="decisionSearchForm">
+              <div class="panel-title">
+                <h3>Search memory</h3>
+                <button class="ghost-button" type="button" data-sample="decision">Sample</button>
+              </div>
+              <label>
+                New scenario
+                <textarea name="query" spellcheck="false" placeholder="For a payment history list, should I reuse the cursor pagination decision?"></textarea>
+              </label>
+              <label>
+                Tags
+                <input name="tags" autocomplete="off" placeholder="pagination, performance">
+              </label>
+              <button class="primary-button" type="submit">Search memory</button>
+            </form>
+
+            <form class="tool-panel" id="reuseAdviceForm">
+              <div class="panel-title">
+                <h3>Reuse advice</h3>
+              </div>
+              <label>
+                Question
+                <textarea name="query" spellcheck="false" placeholder="Can this old decision apply to the new payment history page?"></textarea>
+              </label>
+              <label>
+                Top K
+                <input name="topK" inputmode="numeric" value="5">
+              </label>
+              <button class="primary-button" type="submit">Ask for advice</button>
+            </form>
+
+            <div class="tool-panel wide">
+              <div class="panel-title">
+                <h3>Decision cards</h3>
+                <select id="decisionStatusFilter" class="inline-input">
+                  <option value="active">active</option>
+                  <option value="draft">draft</option>
+                  <option value="deprecated">deprecated</option>
+                  <option value="">all</option>
+                </select>
+              </div>
+              <div class="list" id="decisionList"></div>
+              <pre class="result-box" id="decisionResult">Decision search results and reuse advice will appear here.</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-view" id="panel-knowledge" aria-label="Knowledge RAG">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Local knowledge</p>
+              <h2>Ask Markdown docs with source citations and retrieval records.</h2>
+            </div>
+            <button class="secondary-button" type="button" id="loadSourcesButton">Refresh sources</button>
+          </div>
+
+          <div class="content-grid two">
+            <form class="tool-panel" id="knowledgeSourceForm">
+              <div class="panel-title">
+                <h3>Add source</h3>
+                <button class="ghost-button" type="button" data-sample="knowledge-source">Sample</button>
+              </div>
+              <label>
+                Name
+                <input name="name" autocomplete="off" placeholder="DevContext Docs">
+              </label>
+              <label>
+                Root path
+                <input name="rootPath" autocomplete="off" placeholder="D:\CodeX\DevContext\docs">
+              </label>
+              <label>
+                Source type
+                <select name="sourceType">
+                  <option value="markdown">markdown</option>
+                </select>
+              </label>
+              <button class="primary-button" type="submit">Add source</button>
+            </form>
+
+            <form class="tool-panel" id="knowledgeAskForm">
+              <div class="panel-title">
+                <h3>Ask docs</h3>
+                <button class="ghost-button" type="button" data-sample="knowledge">Sample</button>
+              </div>
+              <label>
+                Source ID
+                <input name="sourceId" inputmode="numeric" placeholder="1">
+              </label>
+              <label>
+                Question
+                <textarea name="query" spellcheck="false" placeholder="Why should the application layer depend on ports?"></textarea>
+              </label>
+              <button class="primary-button" type="submit">Ask knowledge</button>
+            </form>
+
+            <div class="tool-panel wide">
+              <div class="panel-title">
+                <h3>Sources</h3>
+              </div>
+              <div class="list" id="knowledgeSources"></div>
+              <pre class="result-box" id="knowledgeResult">Answers, citations, and indexing results will appear here.</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-view" id="panel-trace" aria-label="Agent trace">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Agent trace</p>
+              <h2>Follow the events behind every generated answer.</h2>
+            </div>
+          </div>
+
+          <div class="content-grid">
+            <div class="tool-panel wide">
+              <div class="panel-title">
+                <h3>Run events</h3>
+                <div class="inline-actions">
+                  <input class="inline-input" id="runIdInput" placeholder="Run ID">
+                  <button class="secondary-button" type="button" id="loadRunButton">Load run</button>
+                </div>
+              </div>
+              <div class="timeline" id="runTimeline"></div>
+              <pre class="result-box" id="runResult">Run metadata and event details will appear here.</pre>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="context-drawer" aria-label="Context stack">
+        <div class="drawer-section">
+          <div class="drawer-title">
+            <span>Context Stack</span>
+            <strong id="drawerProjectName">No project</strong>
+          </div>
+          <div class="context-list">
+            <div class="context-item active">
+              <span>AIReadMe</span>
+              <strong>project facts</strong>
+            </div>
+            <div class="context-item">
+              <span>Code map</span>
+              <strong>symbols</strong>
+            </div>
+            <div class="context-item">
+              <span>Decision cards</span>
+              <strong id="drawerDecisionCount">0 active</strong>
+            </div>
+            <div class="context-item">
+              <span>Knowledge RAG</span>
+              <strong id="drawerSourceCount">0 sources</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="drawer-section">
+          <div class="drawer-title">
+            <span>Quality Loop</span>
+            <strong>local</strong>
+          </div>
+          <ol class="loop-list">
+            <li>Build context assets</li>
+            <li>Review diff with rules</li>
+            <li>Parse ReviewIssue records</li>
+            <li>Accept or reject findings</li>
+            <li>Reuse decisions later</li>
+          </ol>
+        </div>
+      </aside>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

@@ -2,10 +2,20 @@
 target/
 build/
 out/
+dist/
+frontend/dist/
+frontend/node_modules/
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+frontend/tailwind.config.d.ts
+frontend/tailwind.config.js
 
 # Runtime data
 data/
 logs/
+workspace/projects/*
+!workspace/projects/.gitkeep
 *.log
 *.db
 *.sqlite
@@ -14,8 +24,6 @@ logs/
 # Generated AI context assets
 .ai/
 AGENTS.md
-
-# Local planning documents
 docs/
 
 # Local config and secrets

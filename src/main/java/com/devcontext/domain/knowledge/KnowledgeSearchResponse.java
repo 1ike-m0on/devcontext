@@ -6,6 +6,7 @@ public record KnowledgeSearchResponse(
         Long retrievalRecordId,
         String query,
         String rewrittenQuery,
+        KnowledgeQueryPlan queryPlan,
         List<KnowledgeSearchResult> results
 ) {
 }
