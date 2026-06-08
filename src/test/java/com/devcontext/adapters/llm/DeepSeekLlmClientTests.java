@@ -3,6 +3,7 @@ package com.devcontext.adapters.llm;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.devcontext.application.llm.LlmRuntimeStatus;
 import com.devcontext.common.error.ApiException;
 import com.devcontext.config.DevContextLlmProperties;
 import com.devcontext.domain.llm.LlmRequest;
@@ -56,7 +57,7 @@ class DeepSeekLlmClientTests {
                     """);
         });
 
-        DeepSeekLlmClient client = new DeepSeekLlmClient(properties(server), objectMapper);
+        DeepSeekLlmClient client = new DeepSeekLlmClient(properties(server), new LlmRuntimeStatus(), objectMapper);
         LlmResponse response = client.chat(new LlmRequest("review this diff", null));
 
         assertThat(response.content()).isEqualTo("review result");
@@ -75,11 +76,12 @@ class DeepSeekLlmClientTests {
                 }
                 """));
 
-        DeepSeekLlmClient client = new DeepSeekLlmClient(properties(server), objectMapper);
+        DeepSeekLlmClient client = new DeepSeekLlmClient(properties(server), new LlmRuntimeStatus(), objectMapper);
 
         assertThatThrownBy(() -> client.chat(new LlmRequest("review this diff", null)))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("DeepSeek request failed: rate limit exceeded");
+                .isInstanceOfSatisfying(ApiException.class, exception ->
+                        assertThat(exception.errorCode()).isEqualTo("LLM_QUOTA_EXCEEDED"))
+                .hasMessageContaining("rate limit exceeded");
     }
 
     @Test
@@ -92,7 +94,7 @@ class DeepSeekLlmClientTests {
                 }
                 """));
 
-        DeepSeekLlmClient client = new DeepSeekLlmClient(properties(server), objectMapper);
+        DeepSeekLlmClient client = new DeepSeekLlmClient(properties(server), new LlmRuntimeStatus(), objectMapper);
 
         assertThatThrownBy(() -> client.chat(new LlmRequest("review this diff", null)))
                 .isInstanceOfSatisfying(ApiException.class, exception ->
@@ -117,6 +119,7 @@ class DeepSeekLlmClientTests {
         String baseUrl = "http://127.0.0.1:" + httpServer.getAddress().getPort();
         return new DevContextLlmProperties(
                 "deepseek",
+                null,
                 null,
                 new DevContextLlmProperties.DeepSeek("test-key", "deepseek-chat", baseUrl, Duration.ofSeconds(5))
         );

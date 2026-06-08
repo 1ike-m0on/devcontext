@@ -145,9 +145,17 @@ function renderHealth(error) {
   dot.classList.toggle("error", Boolean(error));
   text.textContent = state.health ? "Service online" : "Service unavailable";
 
-  $("#llmChip").textContent = state.health
-    ? `${state.health.llmProvider || "llm"} · ${state.health.llmModel || state.health.llmClient || "model"}`
-    : "LLM unavailable";
+  if (state.health) {
+    const llm = state.health.llm || {};
+    const provider = llm.provider || state.health.llmProvider || "llm";
+    const model = llm.model || state.health.llmModel || state.health.llmClient || "model";
+    const keyStatus = llm.keyStatus || state.health.llmKeyStatus;
+    $("#llmChip").textContent = keyStatus
+      ? `${provider} · ${model} · key ${keyStatus}`
+      : `${provider} · ${model}`;
+  } else {
+    $("#llmChip").textContent = "LLM unavailable";
+  }
   $("#vectorChip").textContent = state.health
     ? `Vector · ${state.health.vectorProvider || "unknown"}`
     : "Vector unavailable";

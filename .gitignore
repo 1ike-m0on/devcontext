@@ -29,6 +29,10 @@ docs/
 # Local config and secrets
 .env
 *.local
+devcontext.local.yml
+devcontext.local.yaml
+config/devcontext.local.yml
+config/devcontext.local.yaml
 application-local.yml
 application-local.yaml
 

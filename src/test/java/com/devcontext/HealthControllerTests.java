@@ -43,10 +43,14 @@ class HealthControllerTests {
         assertThat(data.path("llmProvider").asText()).isEqualTo("mock");
         assertThat(data.path("llmModel").asText()).isEqualTo("mock-llm");
         assertThat(data.path("llmClient").asText()).isEqualTo("MockLlmClient");
-        assertThat(data.path("geminiApiKeyConfigured").asBoolean()).isFalse();
-        assertThat(data.path("geminiTimeout").asText()).isEqualTo("PT1M");
-        assertThat(data.path("deepseekApiKeyConfigured").asBoolean()).isFalse();
-        assertThat(data.path("deepseekTimeout").asText()).isEqualTo("PT2M");
+        assertThat(data.path("llmStatus").asText()).isEqualTo("ready");
+        assertThat(data.path("llmKeyConfigured").asBoolean()).isFalse();
+        assertThat(data.path("llmKeyStatus").asText()).isEqualTo("not_required");
+        assertThat(data.path("llmLastErrorType").isNull()).isTrue();
+        assertThat(data.path("llm").path("provider").asText()).isEqualTo("mock");
+        assertThat(data.path("llm").path("model").asText()).isEqualTo("mock-llm");
+        assertThat(data.path("llm").path("keyConfigured").asBoolean()).isFalse();
+        assertThat(data.path("llm").path("keyStatus").asText()).isEqualTo("not_required");
         assertThat(data.path("vectorProvider").asText()).isEqualTo("jdbc");
         assertThat(data.has("geminiApiKey")).isFalse();
         assertThat(data.has("deepseekApiKey")).isFalse();

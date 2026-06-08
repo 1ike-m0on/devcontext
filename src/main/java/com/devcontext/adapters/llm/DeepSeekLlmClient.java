@@ -1,5 +1,7 @@
 package com.devcontext.adapters.llm;
 
+import com.devcontext.application.llm.LlmErrorTypes;
+import com.devcontext.application.llm.LlmRuntimeStatus;
 import com.devcontext.common.error.ApiException;
 import com.devcontext.config.DevContextLlmProperties;
 import com.devcontext.domain.llm.LlmRequest;
@@ -12,6 +14,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -28,11 +31,13 @@ public class DeepSeekLlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(DeepSeekLlmClient.class);
 
     private final DevContextLlmProperties properties;
+    private final LlmRuntimeStatus runtimeStatus;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
-    public DeepSeekLlmClient(DevContextLlmProperties properties, ObjectMapper objectMapper) {
+    public DeepSeekLlmClient(DevContextLlmProperties properties, LlmRuntimeStatus runtimeStatus, ObjectMapper objectMapper) {
         this.properties = properties;
+        this.runtimeStatus = runtimeStatus;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -47,7 +52,7 @@ public class DeepSeekLlmClient implements LlmClient {
     public LlmResponse chat(LlmRequest request) {
         DevContextLlmProperties.DeepSeek deepseek = properties.deepseek();
         if (deepseek.apiKey() == null || deepseek.apiKey().isBlank()) {
-            throw new ApiException("LLM_API_KEY_MISSING", "DEEPSEEK_API_KEY is not configured", HttpStatus.BAD_REQUEST);
+            throw failure(LlmErrorTypes.PROVIDER_NOT_CONFIGURED, "DEEPSEEK_API_KEY is not configured", HttpStatus.BAD_REQUEST);
         }
         String modelName = configuredModel(request, deepseek);
         HttpRequest httpRequest = buildRequest(deepseek, modelName, request.prompt());
@@ -55,25 +60,29 @@ public class DeepSeekLlmClient implements LlmClient {
         try {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             log.info("DeepSeek response status {}", response.statusCode());
-            if (response.statusCode() == 401 || response.statusCode() == 403) {
-                throw new ApiException("LLM_AUTH_FAILED", summarizeDeepSeekError(response.body()), HttpStatus.BAD_GATEWAY);
-            }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new ApiException("LLM_CALL_FAILED", summarizeDeepSeekError(response.body()), HttpStatus.BAD_GATEWAY);
+                throw failure(
+                        LlmErrorTypes.fromHttpStatus(response.statusCode()),
+                        summarizeDeepSeekError(response.statusCode(), response.body()),
+                        HttpStatus.BAD_GATEWAY
+                );
             }
             String content = extractText(response.body());
+            runtimeStatus.recordSuccess();
             return new LlmResponse(
                     content,
                     modelName,
                     estimateTokens(request.prompt()),
                     estimateTokens(content)
             );
+        } catch (HttpTimeoutException e) {
+            throw failure(LlmErrorTypes.TIMEOUT, "DeepSeek request timed out", HttpStatus.BAD_GATEWAY);
         } catch (IOException e) {
             log.warn("DeepSeek request failed before receiving a valid response: {}", e.getMessage());
-            throw new ApiException("LLM_CALL_FAILED", "DeepSeek request failed: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.fromMessage(e.getMessage()), "DeepSeek request failed: " + safe(e.getMessage()), HttpStatus.BAD_GATEWAY);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new ApiException("LLM_CALL_FAILED", "DeepSeek request was interrupted", HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.TIMEOUT, "DeepSeek request was interrupted", HttpStatus.BAD_GATEWAY);
         }
     }
 
@@ -95,15 +104,20 @@ public class DeepSeekLlmClient implements LlmClient {
                 .build();
     }
 
-    private String extractText(String responseBody) throws IOException {
-        JsonNode root = objectMapper.readTree(responseBody);
+    private String extractText(String responseBody) {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(responseBody);
+        } catch (IOException e) {
+            throw failure(LlmErrorTypes.PARSE_FAILED, "DeepSeek response was not valid JSON", HttpStatus.BAD_GATEWAY);
+        }
         JsonNode choices = root.path("choices");
         if (!choices.isArray() || choices.isEmpty()) {
-            throw new ApiException("LLM_RESPONSE_EMPTY", "DeepSeek response did not include choices", HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.PARSE_FAILED, "DeepSeek response did not include choices", HttpStatus.BAD_GATEWAY);
         }
         String content = choices.get(0).path("message").path("content").asText("");
         if (content.isBlank()) {
-            throw new ApiException("LLM_RESPONSE_EMPTY", "DeepSeek response did not include message content", HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.PARSE_FAILED, "DeepSeek response did not include message content", HttpStatus.BAD_GATEWAY);
         }
         return content;
     }
@@ -123,12 +137,15 @@ public class DeepSeekLlmClient implements LlmClient {
         }
     }
 
-    private String summarizeDeepSeekError(String body) {
+    private String summarizeDeepSeekError(int statusCode, String body) {
         try {
             JsonNode root = objectMapper.readTree(body);
             String message = root.path("error").path("message").asText();
+            if (message.isBlank()) {
+                message = root.path("message").asText();
+            }
             if (!message.isBlank()) {
-                return "DeepSeek request failed: " + message;
+                return "DeepSeek request failed with HTTP " + statusCode + ": " + safe(message);
             }
         } catch (IOException ignored) {
             // Fall back to a compact raw-body summary below.
@@ -137,7 +154,9 @@ public class DeepSeekLlmClient implements LlmClient {
         if (compact.length() > 300) {
             compact = compact.substring(0, 300);
         }
-        return compact.isBlank() ? "DeepSeek request failed" : "DeepSeek request failed: " + compact;
+        return compact.isBlank()
+                ? "DeepSeek request failed with HTTP " + statusCode
+                : "DeepSeek request failed with HTTP " + statusCode + ": " + safe(compact);
     }
 
     private String trimTrailingSlash(String value) {
@@ -152,5 +171,15 @@ public class DeepSeekLlmClient implements LlmClient {
             return 0;
         }
         return Math.max(1, text.length() / 4);
+    }
+
+    private ApiException failure(String errorType, String message, HttpStatus status) {
+        String safeMessage = safe(message);
+        runtimeStatus.recordFailure(errorType, safeMessage);
+        return new ApiException(errorType, safeMessage, status);
+    }
+
+    private String safe(String value) {
+        return properties.maskSecrets(value);
     }
 }

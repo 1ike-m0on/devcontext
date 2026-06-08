@@ -178,6 +178,14 @@ docker compose up -d --build
 GET http://localhost:18080/api/health
 ```
 
+LLM provider/model/key 状态和最近错误类型也可以单独查看：
+
+```http
+GET http://localhost:18080/api/settings/llm
+```
+
+这些状态接口只返回 API Key 是否已配置，不会返回明文 API Key。
+
 ## 使用真实模型
 
 推荐把 `.env.example` 复制为 `.env`，然后只改 `.env`：
@@ -187,6 +195,8 @@ Copy-Item .env.example .env
 ```
 
 Docker Compose 会读取这份配置。切换模型后执行 `docker compose up -d backend` 重启后端容器即可。
+
+本地 Maven 运行也可以使用被 Git 忽略的 `devcontext.local.yml` 或 `config/devcontext.local.yml` 覆盖模型配置，避免通过 PowerShell 临时环境变量切换。
 
 ### Gemini
 
