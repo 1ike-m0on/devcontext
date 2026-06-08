@@ -1,6 +1,9 @@
 spring:
   config:
-    import: optional:file:.env[.properties]
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:./devcontext.local.yml
+      - optional:file:./config/devcontext.local.yml
   application:
     name: devcontext
   datasource:
@@ -17,6 +20,8 @@ server:
 devcontext:
   llm:
     provider: ${DEVCONTEXT_LLM_PROVIDER:mock}
+    mock:
+      model: ${DEVCONTEXT_MOCK_MODEL:mock-llm}
     gemini:
       api-key: ${GEMINI_API_KEY:}
       model: ${GEMINI_MODEL:gemini-2.0-flash}

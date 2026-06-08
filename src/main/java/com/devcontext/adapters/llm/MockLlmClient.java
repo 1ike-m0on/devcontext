@@ -1,11 +1,12 @@
 package com.devcontext.adapters.llm;
 
+import com.devcontext.application.llm.LlmRuntimeStatus;
 import com.devcontext.domain.llm.LlmRequest;
 import com.devcontext.domain.llm.LlmResponse;
 import com.devcontext.ports.llm.LlmClient;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -14,7 +15,10 @@ public class MockLlmClient implements LlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(MockLlmClient.class);
 
-    public MockLlmClient() {
+    private final LlmRuntimeStatus runtimeStatus;
+
+    public MockLlmClient(LlmRuntimeStatus runtimeStatus) {
+        this.runtimeStatus = runtimeStatus;
         log.info("Mock LLM client initialized");
     }
 
@@ -22,6 +26,7 @@ public class MockLlmClient implements LlmClient {
     public LlmResponse chat(LlmRequest request) {
         log.info("Mock LLM client handling request with model {}", request.modelName());
         String content = "MOCK_RESPONSE: " + request.prompt();
+        runtimeStatus.recordSuccess();
         return new LlmResponse(
                 content,
                 request.modelName(),

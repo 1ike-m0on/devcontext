@@ -1,5 +1,7 @@
 package com.devcontext.adapters.llm;
 
+import com.devcontext.application.llm.LlmErrorTypes;
+import com.devcontext.application.llm.LlmRuntimeStatus;
 import com.devcontext.common.error.ApiException;
 import com.devcontext.config.DevContextLlmProperties;
 import com.devcontext.domain.llm.LlmRequest;
@@ -13,15 +15,16 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -31,11 +34,13 @@ public class GeminiLlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(GeminiLlmClient.class);
 
     private final DevContextLlmProperties properties;
+    private final LlmRuntimeStatus runtimeStatus;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
-    public GeminiLlmClient(DevContextLlmProperties properties, ObjectMapper objectMapper) {
+    public GeminiLlmClient(DevContextLlmProperties properties, LlmRuntimeStatus runtimeStatus, ObjectMapper objectMapper) {
         this.properties = properties;
+        this.runtimeStatus = runtimeStatus;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -50,7 +55,7 @@ public class GeminiLlmClient implements LlmClient {
     public LlmResponse chat(LlmRequest request) {
         DevContextLlmProperties.Gemini gemini = properties.gemini();
         if (gemini.apiKey() == null || gemini.apiKey().isBlank()) {
-            throw new ApiException("LLM_API_KEY_MISSING", "GEMINI_API_KEY is not configured", HttpStatus.BAD_REQUEST);
+            throw failure(LlmErrorTypes.PROVIDER_NOT_CONFIGURED, "GEMINI_API_KEY is not configured", HttpStatus.BAD_REQUEST);
         }
         String modelName = configuredModel(request, gemini);
         HttpRequest httpRequest = buildRequest(gemini, modelName, request.prompt());
@@ -59,21 +64,28 @@ public class GeminiLlmClient implements LlmClient {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             log.info("Gemini response status {}", response.statusCode());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new ApiException("LLM_CALL_FAILED", summarizeGeminiError(response.body()), HttpStatus.BAD_GATEWAY);
+                throw failure(
+                        LlmErrorTypes.fromHttpStatus(response.statusCode()),
+                        summarizeGeminiError(response.statusCode(), response.body()),
+                        HttpStatus.BAD_GATEWAY
+                );
             }
             String content = extractText(response.body());
+            runtimeStatus.recordSuccess();
             return new LlmResponse(
                     content,
                     modelName,
                     estimateTokens(request.prompt()),
                     estimateTokens(content)
             );
+        } catch (HttpTimeoutException e) {
+            throw failure(LlmErrorTypes.TIMEOUT, "Gemini request timed out", HttpStatus.BAD_GATEWAY);
         } catch (IOException e) {
             log.warn("Gemini request failed before receiving a valid response: {}", e.getMessage());
-            throw new ApiException("LLM_CALL_FAILED", "Gemini request failed: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.fromMessage(e.getMessage()), "Gemini request failed: " + safe(e.getMessage()), HttpStatus.BAD_GATEWAY);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new ApiException("LLM_CALL_FAILED", "Gemini request was interrupted", HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.TIMEOUT, "Gemini request was interrupted", HttpStatus.BAD_GATEWAY);
         }
     }
 
@@ -95,11 +107,16 @@ public class GeminiLlmClient implements LlmClient {
                 .build();
     }
 
-    private String extractText(String responseBody) throws IOException {
-        JsonNode root = objectMapper.readTree(responseBody);
+    private String extractText(String responseBody) {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(responseBody);
+        } catch (IOException e) {
+            throw failure(LlmErrorTypes.PARSE_FAILED, "Gemini response was not valid JSON", HttpStatus.BAD_GATEWAY);
+        }
         JsonNode candidates = root.path("candidates");
         if (!candidates.isArray() || candidates.isEmpty()) {
-            throw new ApiException("LLM_RESPONSE_EMPTY", "Gemini response did not include candidates", HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.PARSE_FAILED, "Gemini response did not include candidates", HttpStatus.BAD_GATEWAY);
         }
         JsonNode parts = candidates.get(0).path("content").path("parts");
         List<String> texts = new ArrayList<>();
@@ -112,7 +129,7 @@ public class GeminiLlmClient implements LlmClient {
             }
         }
         if (texts.isEmpty()) {
-            throw new ApiException("LLM_RESPONSE_EMPTY", "Gemini response did not include text", HttpStatus.BAD_GATEWAY);
+            throw failure(LlmErrorTypes.PARSE_FAILED, "Gemini response did not include text", HttpStatus.BAD_GATEWAY);
         }
         return String.join(System.lineSeparator(), texts);
     }
@@ -132,12 +149,12 @@ public class GeminiLlmClient implements LlmClient {
         }
     }
 
-    private String summarizeGeminiError(String body) {
+    private String summarizeGeminiError(int statusCode, String body) {
         try {
             JsonNode root = objectMapper.readTree(body);
             String message = root.path("error").path("message").asText();
             if (!message.isBlank()) {
-                return "Gemini request failed: " + message;
+                return "Gemini request failed with HTTP " + statusCode + ": " + safe(message);
             }
         } catch (IOException ignored) {
             // Fall back to a compact raw-body summary below.
@@ -146,7 +163,9 @@ public class GeminiLlmClient implements LlmClient {
         if (compact.length() > 300) {
             compact = compact.substring(0, 300);
         }
-        return compact.isBlank() ? "Gemini request failed" : "Gemini request failed: " + compact;
+        return compact.isBlank()
+                ? "Gemini request failed with HTTP " + statusCode
+                : "Gemini request failed with HTTP " + statusCode + ": " + safe(compact);
     }
 
     private String trimTrailingSlash(String value) {
@@ -161,5 +180,15 @@ public class GeminiLlmClient implements LlmClient {
             return 0;
         }
         return Math.max(1, text.length() / 4);
+    }
+
+    private ApiException failure(String errorType, String message, HttpStatus status) {
+        String safeMessage = safe(message);
+        runtimeStatus.recordFailure(errorType, safeMessage);
+        return new ApiException(errorType, safeMessage, status);
+    }
+
+    private String safe(String value) {
+        return properties.maskSecrets(value);
     }
 }
