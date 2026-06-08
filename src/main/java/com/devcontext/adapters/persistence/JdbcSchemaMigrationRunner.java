@@ -17,6 +17,7 @@ public class JdbcSchemaMigrationRunner {
 
     @PostConstruct
     public void migrate() {
+        addColumnIfMissing("agent_run", "provider", "TEXT");
         addColumnIfMissing("decision_card", "embedding_status", "TEXT NOT NULL DEFAULT 'pending'");
         addColumnIfMissing("decision_card", "embedding_updated_at", "TEXT");
         addColumnIfMissing("decision_reuse_record", "run_id", "INTEGER");

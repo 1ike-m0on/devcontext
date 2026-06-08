@@ -23,10 +23,10 @@ public class MockLlmApplicationService {
 
     public MockLlmResult chat(Long projectId, String prompt) {
         String modelName = llmProperties.modelName();
-        AgentRun run = runService.startRun(projectId, "LLM_TEST", modelName, "mvp0");
+        AgentRun run = runService.startRun(projectId, "LLM_TEST", "mvp0");
         runService.recordEvent(run.id(), "PROMPT_BUILT", "llm prompt", "Prompt accepted", "success", null, null);
         LlmResponse response = llmClient.chat(new LlmRequest(prompt, modelName));
-        runService.recordEvent(run.id(), "LLM_CALLED", modelName, "LLM response generated", "success", null, null);
+        runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.providerModelLabel(), "LLM response generated", "success", null, null);
         AgentRun finished = runService.finishRun(run, response.inputTokenEstimate(), response.outputTokenEstimate());
         return new MockLlmResult(finished.id(), response);
     }

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS agent_run (
     project_id INTEGER,
     run_type TEXT NOT NULL,
     status TEXT NOT NULL,
+    provider TEXT,
     model_name TEXT,
     prompt_version TEXT,
     input_token_estimate INTEGER,

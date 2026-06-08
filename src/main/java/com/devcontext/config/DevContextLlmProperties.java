@@ -36,6 +36,10 @@ public record DevContextLlmProperties(
         return mock.model();
     }
 
+    public String providerModelLabel() {
+        return provider + "/" + modelName();
+    }
+
     public boolean supportedProvider() {
         return supportedProviders().contains(provider);
     }

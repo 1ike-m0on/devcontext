@@ -174,8 +174,22 @@ class Mvp2AiCodeReviewTests {
                         "RUN_FINISHED",
                         "REVIEW_ISSUE_STATUS_UPDATED"
                 );
+        assertThat(events)
+                .filteredOn(event -> "LLM_CALLED".equals(event.path("eventType").asText()))
+                .first()
+                .satisfies(event -> assertThat(event.path("inputSummary").asText()).isEqualTo("test/mock-llm"));
         assertThat(events.get(11).path("inputSummary").asText()).contains("pending -> accepted");
         assertThat(events.get(11).path("outputSummary").asText()).contains("Valid issue for MVP2 test.");
+
+        String runResponse = mockMvc.perform(get("/api/agent-runs/{runId}", runId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode runJson = objectMapper.readTree(runResponse).path("data");
+        assertThat(runJson.path("provider").asText()).isEqualTo("test");
+        assertThat(runJson.path("modelName").asText()).isEqualTo("mock-llm");
     }
 
     @Test

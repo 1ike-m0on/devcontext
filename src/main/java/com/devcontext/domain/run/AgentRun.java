@@ -7,6 +7,7 @@ public record AgentRun(
         Long projectId,
         String runType,
         String status,
+        String provider,
         String modelName,
         String promptVersion,
         Integer inputTokenEstimate,
@@ -17,4 +18,3 @@ public record AgentRun(
         Instant finishedAt
 ) {
 }
-

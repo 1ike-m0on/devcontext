@@ -96,7 +96,7 @@ public class ReviewApplicationService {
 
     public ReviewCreateResult createReview(Long projectId, CreateReviewCommand command) {
         Project project = projectService.getProject(projectId);
-        AgentRun run = runService.startRun(projectId, "AI_CODE_REVIEW", llmProperties.modelName(), "mvp2");
+        AgentRun run = runService.startRun(projectId, "AI_CODE_REVIEW", "mvp2");
         try {
             GitDiff diff = resolveDiff(project, command);
             if (diff.text() == null || diff.text().isBlank()) {
@@ -133,9 +133,9 @@ public class ReviewApplicationService {
             String prompt = promptBuilder.build(project, diff, contextItems, command.mode());
             runService.recordEvent(run.id(), "PROMPT_BUILT", "review prompt", prompt.length() + " chars", "success", null, null);
 
-            runService.recordEvent(run.id(), "LLM_CALL_STARTED", llmProperties.modelName(), "Sending review prompt to LLM", "success", null, null);
+            runService.recordEvent(run.id(), "LLM_CALL_STARTED", llmProperties.providerModelLabel(), "Sending review prompt to LLM", "success", null, null);
             LlmResponse response = llmClient.chat(new LlmRequest(prompt, llmProperties.modelName()));
-            runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.modelName(), "LLM response generated", "success", null, null);
+            runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.providerModelLabel(), "LLM response generated", "success", null, null);
 
             ParsedReviewReport rawReport = reportParser.parse(response.content());
             runService.recordEvent(run.id(), "LLM_RESPONSE_PARSED", "model response", rawReport.issues().size() + " issues parsed", "success", null, null);
