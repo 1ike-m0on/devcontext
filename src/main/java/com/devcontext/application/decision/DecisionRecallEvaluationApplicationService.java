@@ -38,7 +38,7 @@ public class DecisionRecallEvaluationApplicationService {
 
     public DecisionRecallEvaluationResult evaluate(DecisionRecallEvaluationCommand command) {
         validate(command);
-        AgentRun run = runService.startRun(null, "DECISION_RECALL_EVALUATION", llmProperties.modelName(), "v0.5.3");
+        AgentRun run = runService.startRun(null, "DECISION_RECALL_EVALUATION", "v0.5.3");
         try {
             List<DecisionRecallEvaluationCaseResult> results = new ArrayList<>();
             for (DecisionRecallEvaluationCaseCommand evaluationCase : command.cases()) {

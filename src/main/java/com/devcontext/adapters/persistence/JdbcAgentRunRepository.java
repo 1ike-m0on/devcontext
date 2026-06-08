@@ -22,6 +22,7 @@ public class JdbcAgentRunRepository implements AgentRunRepository {
             nullableLong(rs, "project_id"),
             rs.getString("run_type"),
             rs.getString("status"),
+            rs.getString("provider"),
             rs.getString("model_name"),
             rs.getString("prompt_version"),
             nullableInt(rs, "input_token_estimate"),
@@ -42,23 +43,24 @@ public class JdbcAgentRunRepository implements AgentRunRepository {
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO agent_run (
-                        project_id, run_type, status, model_name, prompt_version,
+                        project_id, run_type, status, provider, model_name, prompt_version,
                         input_token_estimate, output_token_estimate, duration_ms,
                         error_message, created_at, finished_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setObject(1, run.projectId());
             statement.setString(2, run.runType());
             statement.setString(3, run.status());
-            statement.setString(4, run.modelName());
-            statement.setString(5, run.promptVersion());
-            statement.setObject(6, run.inputTokenEstimate());
-            statement.setObject(7, run.outputTokenEstimate());
-            statement.setObject(8, run.durationMs());
-            statement.setString(9, run.errorMessage());
-            statement.setString(10, run.createdAt().toString());
-            statement.setString(11, run.finishedAt() == null ? null : run.finishedAt().toString());
+            statement.setString(4, run.provider());
+            statement.setString(5, run.modelName());
+            statement.setString(6, run.promptVersion());
+            statement.setObject(7, run.inputTokenEstimate());
+            statement.setObject(8, run.outputTokenEstimate());
+            statement.setObject(9, run.durationMs());
+            statement.setString(10, run.errorMessage());
+            statement.setString(11, run.createdAt().toString());
+            statement.setString(12, run.finishedAt() == null ? null : run.finishedAt().toString());
             return statement;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -67,6 +69,7 @@ public class JdbcAgentRunRepository implements AgentRunRepository {
                 run.projectId(),
                 run.runType(),
                 run.status(),
+                run.provider(),
                 run.modelName(),
                 run.promptVersion(),
                 run.inputTokenEstimate(),

@@ -146,6 +146,8 @@ class V04KnowledgeRagTests {
                 .getContentAsString();
 
         JsonNode runJson = objectMapper.readTree(runResponse).path("data");
+        assertThat(runJson.path("run").path("provider").asText()).isEqualTo("test");
+        assertThat(runJson.path("run").path("modelName").asText()).isEqualTo("mock-llm");
         assertThat(runJson.path("retrievalRecords")).hasSize(1);
         assertThat(runJson.path("events"))
                 .extracting(event -> event.path("eventType").asText())
@@ -160,6 +162,10 @@ class V04KnowledgeRagTests {
                         "RAG_ANSWER_GENERATED",
                         "RUN_FINISHED"
                 );
+        assertThat(runJson.path("events"))
+                .filteredOn(event -> "LLM_CALLED".equals(event.path("eventType").asText()))
+                .first()
+                .satisfies(event -> assertThat(event.path("inputSummary").asText()).isEqualTo("test/mock-llm"));
     }
 
     @Test

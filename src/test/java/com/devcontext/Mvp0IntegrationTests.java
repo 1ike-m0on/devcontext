@@ -1,6 +1,8 @@
 package com.devcontext;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.devcontext.application.llm.MockLlmApplicationService;
 import com.devcontext.application.project.ProjectApplicationService;
@@ -11,6 +13,8 @@ import com.devcontext.domain.context.ContextItem;
 import com.devcontext.domain.project.Project;
 import com.devcontext.domain.run.AgentEvent;
 import com.devcontext.domain.run.AgentRun;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,12 +22,15 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:sqlite:target/devcontext-test.sqlite",
         "devcontext.llm.provider=mock"
 })
+@AutoConfigureMockMvc
 class Mvp0IntegrationTests {
 
     static {
@@ -46,11 +53,17 @@ class Mvp0IntegrationTests {
     @Autowired
     private AgentRunApplicationService runService;
 
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @TempDir
     private Path projectRoot;
 
     @Test
-    void completesMinimumMvp0Flow() throws IOException {
+    void completesMinimumMvp0Flow() throws Exception {
         Files.writeString(projectRoot.resolve("pom.xml"), "<project></project>");
 
         Project project = projectService.createProject("mvp0-test-project", projectRoot.toString(), "main");
@@ -79,10 +92,21 @@ class Mvp0IntegrationTests {
         AgentRun run = runService.getRun(result.runId());
         assertThat(run.status()).isEqualTo("success");
         assertThat(run.projectId()).isEqualTo(project.id());
+        assertThat(run.provider()).isEqualTo("mock");
+        assertThat(run.modelName()).isEqualTo("mock-llm");
 
-        List<String> eventTypes = runService.listEvents(result.runId()).stream()
-                .map(AgentEvent::eventType)
-                .toList();
+        String runResponse = mockMvc.perform(get("/api/agent-runs/{runId}", result.runId()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode runJson = objectMapper.readTree(runResponse).path("data");
+        assertThat(runJson.path("provider").asText()).isEqualTo("mock");
+        assertThat(runJson.path("modelName").asText()).isEqualTo("mock-llm");
+
+        List<AgentEvent> events = runService.listEvents(result.runId());
+        List<String> eventTypes = events.stream().map(AgentEvent::eventType).toList();
 
         assertThat(eventTypes).containsExactly(
                 "RUN_STARTED",
@@ -90,6 +114,11 @@ class Mvp0IntegrationTests {
                 "LLM_CALLED",
                 "RUN_FINISHED"
         );
+        assertThat(events.stream()
+                .filter(event -> "LLM_CALLED".equals(event.eventType()))
+                .findFirst()
+                .orElseThrow()
+                .inputSummary()).isEqualTo("mock/mock-llm");
 
         Project updated = projectService.updateProject(project.id(), "renamed-mvp0-project", projectRoot.toString(), "develop");
         assertThat(updated.name()).isEqualTo("renamed-mvp0-project");

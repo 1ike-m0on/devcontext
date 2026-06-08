@@ -142,7 +142,7 @@ public class DecisionMemoryApplicationService {
         }
         DecisionCard current = getDecision(command.decisionId());
         String status = normalizeStatus(command.status());
-        AgentRun run = runService.startRun(current.projectId(), "DECISION_STATUS_UPDATE", llmProperties.modelName(), "v0.5.1");
+        AgentRun run = runService.startRun(current.projectId(), "DECISION_STATUS_UPDATE", "v0.5.1");
         try {
             DecisionCard updated = decisionCardRepository.updateStatus(current.id(), status, Instant.now());
             runService.recordEvent(run.id(), "DECISION_STATUS_CHANGED", current.status(), status, "success", null, null);
@@ -163,7 +163,7 @@ public class DecisionMemoryApplicationService {
             throw new ApiException("DECISION_IDS_REQUIRED", "decisionIds is required", HttpStatus.BAD_REQUEST);
         }
         String status = normalizeStatus(command.status());
-        AgentRun run = runService.startRun(null, "DECISION_BATCH_STATUS_UPDATE", llmProperties.modelName(), "v0.5.2");
+        AgentRun run = runService.startRun(null, "DECISION_BATCH_STATUS_UPDATE", "v0.5.2");
         try {
             List<DecisionCard> updatedCards = new ArrayList<>();
             for (Long decisionId : distinctIds(command.decisionIds())) {
@@ -189,7 +189,7 @@ public class DecisionMemoryApplicationService {
                 command.tag(),
                 command.query()
         ));
-        AgentRun run = runService.startRun(command.projectId(), "DECISION_BATCH_REINDEX", llmProperties.modelName(), "v0.5.2");
+        AgentRun run = runService.startRun(command.projectId(), "DECISION_BATCH_REINDEX", "v0.5.2");
         try {
             runService.recordEvent(run.id(), "DECISION_BATCH_REINDEX_STARTED", "requested", targets.size() + " decision cards", "success", null, null);
             List<DecisionCard> indexedCards = new ArrayList<>();
@@ -243,7 +243,7 @@ public class DecisionMemoryApplicationService {
 
     public DecisionReuseAdviceResult reuseAdvice(DecisionReuseAdviceCommand command) {
         requireText(command.query(), "query");
-        AgentRun run = runService.startRun(command.projectId(), "DECISION_REUSE_ADVICE", llmProperties.modelName(), "v0.5");
+        AgentRun run = runService.startRun(command.projectId(), "DECISION_REUSE_ADVICE", "v0.5");
         try {
             DecisionSearchResponse searchResponse = searchService.search(new DecisionSearchCommand(
                     command.query(),
@@ -258,7 +258,7 @@ public class DecisionMemoryApplicationService {
             runService.recordEvent(run.id(), "PROMPT_BUILT", "decision reuse prompt", prompt.length() + " chars", "success", null, null);
 
             LlmResponse response = llmClient.chat(new LlmRequest(prompt, llmProperties.modelName()));
-            runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.modelName(), "LLM response generated", "success", null, null);
+            runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.providerModelLabel(), "LLM response generated", "success", null, null);
 
             List<Long> matchedIds = matches.stream()
                     .map(match -> match.decision().id())

@@ -40,7 +40,7 @@ public class RagAnswerApplicationService {
     }
 
     public RagAnswerResult ask(RagAskCommand command) {
-        AgentRun run = runService.startRun(null, "KNOWLEDGE_RAG_ASK", llmProperties.modelName(), "v0.4");
+        AgentRun run = runService.startRun(null, "KNOWLEDGE_RAG_ASK", "v0.4");
         try {
             KnowledgeSearchResponse searchResponse = searchService.search(new KnowledgeSearchCommand(
                     command.query(),
@@ -56,7 +56,7 @@ public class RagAnswerApplicationService {
             runService.recordEvent(run.id(), "PROMPT_BUILT", "knowledge RAG prompt", prompt.length() + " chars", "success", null, null);
 
             LlmResponse response = llmClient.chat(new LlmRequest(prompt, llmProperties.modelName()));
-            runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.modelName(), "LLM response generated", "success", null, null);
+            runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.providerModelLabel(), "LLM response generated", "success", null, null);
             runService.recordEvent(run.id(), "RAG_ANSWER_GENERATED", searchResponse.rewrittenQuery(), response.content().length() + " chars", "success", null, null);
             runService.finishRun(run, response.inputTokenEstimate(), response.outputTokenEstimate());
             return new RagAnswerResult(

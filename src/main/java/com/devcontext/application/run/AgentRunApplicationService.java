@@ -1,6 +1,7 @@
 package com.devcontext.application.run;
 
 import com.devcontext.common.error.ApiException;
+import com.devcontext.config.DevContextLlmProperties;
 import com.devcontext.domain.run.AgentEvent;
 import com.devcontext.domain.run.AgentRun;
 import com.devcontext.ports.run.AgentEventRepository;
@@ -16,18 +17,27 @@ public class AgentRunApplicationService {
 
     private final AgentRunRepository runRepository;
     private final AgentEventRepository eventRepository;
+    private final DevContextLlmProperties llmProperties;
 
-    public AgentRunApplicationService(AgentRunRepository runRepository, AgentEventRepository eventRepository) {
+    public AgentRunApplicationService(
+            AgentRunRepository runRepository,
+            AgentEventRepository eventRepository,
+            DevContextLlmProperties llmProperties
+    ) {
         this.runRepository = runRepository;
         this.eventRepository = eventRepository;
+        this.llmProperties = llmProperties;
     }
 
-    public AgentRun startRun(Long projectId, String runType, String modelName, String promptVersion) {
+    public AgentRun startRun(Long projectId, String runType, String promptVersion) {
+        String provider = llmProperties.provider();
+        String modelName = llmProperties.modelName();
         AgentRun run = new AgentRun(
                 null,
                 projectId,
                 runType,
                 "running",
+                provider,
                 modelName,
                 promptVersion,
                 null,
@@ -50,6 +60,7 @@ public class AgentRunApplicationService {
                 run.projectId(),
                 run.runType(),
                 "success",
+                run.provider(),
                 run.modelName(),
                 run.promptVersion(),
                 inputTokenEstimate,
@@ -72,6 +83,7 @@ public class AgentRunApplicationService {
                 run.projectId(),
                 run.runType(),
                 "failed",
+                run.provider(),
                 run.modelName(),
                 run.promptVersion(),
                 run.inputTokenEstimate(),
