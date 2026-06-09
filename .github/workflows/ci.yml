@@ -68,3 +68,19 @@ jobs:
             printf 'Private/local management docs must stay ignored, but these files are tracked:\n%s\n' "$blocked_paths"
             exit 1
           fi
+
+  docker-build:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    env:
+      DEVCONTEXT_LLM_PROVIDER: mock
+      DEVCONTEXT_VECTOR_PROVIDER: jdbc
+      GEMINI_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build backend and frontend images
+        run: docker compose build backend frontend
