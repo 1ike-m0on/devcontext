@@ -54,6 +54,8 @@ DevContext service or an LLM provider.
     exit 0
 }
 
+. (Join-Path $PSScriptRoot "devcontext-report-metadata.ps1")
+
 function New-RunId {
     return (Get-Date).ToString("yyyyMMdd-HHmmss")
 }
@@ -193,6 +195,15 @@ function Invoke-DevContextApi {
         if ($null -ne $responseFile) {
             Remove-Item -LiteralPath $responseFile -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+function Get-LlmReportMetadata {
+    try {
+        $response = Invoke-DevContextApi -Method "Get" -Path "/api/settings/llm"
+        return New-DevContextLlmReportMetadata -Data $response.data
+    } catch {
+        return New-DevContextLlmReportMetadata -MetadataError $_.Exception.Message
     }
 }
 
@@ -1128,6 +1139,7 @@ function Write-Reports {
         [object]$Project,
         [object]$Summary,
         [object[]]$Cases,
+        [object]$LlmMetadata,
         [string]$OutputDir
     )
     if (-not (Test-Path -LiteralPath $OutputDir)) {
@@ -1144,6 +1156,7 @@ function Write-Reports {
         mode = $Mode
         timeoutSeconds = $TimeoutSeconds
         retryCount = $RetryCount
+        llm = $LlmMetadata
         generatedAt = (Get-Date).ToString("o")
         summary = $Summary
         cases = $Cases
@@ -1163,6 +1176,7 @@ function Write-Reports {
     $lines += "- Mode: ``$Mode``"
     $lines += "- Timeout seconds: ``$TimeoutSeconds``"
     $lines += "- Retry count: ``$RetryCount``"
+    $lines = Add-DevContextLlmReportMarkdownLines -Lines $lines -LlmMetadata $LlmMetadata
     $lines += ""
     $lines += "## Summary"
     $lines += ""
@@ -1371,7 +1385,7 @@ foreach ($case in $cases) {
 }
 
 $summary = Summarize-Results -Cases $caseResults
-$report = Write-Reports -RunId $runId -Project $project -Summary $summary -Cases $caseResults -OutputDir $OutputDir
+$report = Write-Reports -RunId $runId -Project $project -Summary $summary -Cases $caseResults -LlmMetadata (Get-LlmReportMetadata) -OutputDir $OutputDir
 
 Write-Host ""
 Write-Host "CodeReview benchmark complete"

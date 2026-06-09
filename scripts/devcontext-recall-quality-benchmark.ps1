@@ -35,6 +35,8 @@ unless -KeepData is provided.
     exit 0
 }
 
+. (Join-Path $PSScriptRoot "devcontext-report-metadata.ps1")
+
 function New-RunId {
     return (Get-Date).ToString("yyyyMMdd-HHmmss")
 }
@@ -51,6 +53,18 @@ function Invoke-DevContextApi {
     }
     $json = $Body | ConvertTo-Json -Depth 80
     return Invoke-RestMethod -Method $Method -Uri $uri -ContentType "application/json" -Body $json -TimeoutSec $TimeoutSeconds
+}
+
+function Get-LlmReportMetadata {
+    try {
+        $response = Invoke-DevContextApi -Method "Get" -Path "/api/settings/llm"
+        if ($null -ne $response -and $response.PSObject.Properties.Name -contains "success" -and -not $response.success) {
+            return New-DevContextLlmReportMetadata -MetadataError "$($response.errorCode): $($response.message)"
+        }
+        return New-DevContextLlmReportMetadata -Data $response.data
+    } catch {
+        return New-DevContextLlmReportMetadata -MetadataError $_.Exception.Message
+    }
 }
 
 function New-Decision {
@@ -95,6 +109,7 @@ function Write-Reports {
         [object]$Result,
         [long[]]$SeededIds,
         [bool]$CleanupDone,
+        [object]$LlmMetadata,
         [string]$OutputDir
     )
     if (-not (Test-Path -LiteralPath $OutputDir)) {
@@ -113,6 +128,7 @@ function Write-Reports {
         topK = $TopK
         seededDecisionIds = $SeededIds
         cleanupDone = $CleanupDone
+        llm = $LlmMetadata
         generatedAt = (Get-Date).ToString("o")
         evaluation = $Result
     }
@@ -129,6 +145,7 @@ function Write-Reports {
     $lines += "- Other project ID: ``$OtherProjectId``"
     $lines += "- TopK: ``$TopK``"
     $lines += "- Cleanup done: ``$CleanupDone``"
+    $lines = Add-DevContextLlmReportMarkdownLines -Lines $lines -LlmMetadata $LlmMetadata
     $lines += ""
     $lines += "## Summary"
     $lines += ""
@@ -330,6 +347,7 @@ $report = Write-Reports `
     -Result $result `
     -SeededIds @($seededIds | ForEach-Object { [long]$_ }) `
     -CleanupDone $cleanupDone `
+    -LlmMetadata (Get-LlmReportMetadata) `
     -OutputDir $OutputDir
 
 Write-Host ""

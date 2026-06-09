@@ -37,6 +37,8 @@ Notes:
     exit 0
 }
 
+. (Join-Path $PSScriptRoot "devcontext-report-metadata.ps1")
+
 function New-RunId {
     return (Get-Date).ToString("yyyyMMdd-HHmmss")
 }
@@ -155,6 +157,14 @@ function Invoke-DevContextApi {
             ErrorCode = "REQUEST_FAILED"
         }
     }
+}
+
+function Get-LlmReportMetadata {
+    $response = Invoke-DevContextApi -Method "Get" -Path "/api/settings/llm"
+    if ($response.Success) {
+        return New-DevContextLlmReportMetadata -Data $response.Data
+    }
+    return New-DevContextLlmReportMetadata -MetadataError "$($response.ErrorCode): $($response.Message)"
 }
 
 function Measure-Endpoint {
@@ -308,6 +318,7 @@ function Write-Reports {
         [object[]]$Rows,
         [long[]]$SeededIds,
         [bool]$CleanupDone,
+        [object]$LlmMetadata,
         [string]$OutputDir
     )
     if (-not (Test-Path -LiteralPath $OutputDir)) {
@@ -327,6 +338,7 @@ function Write-Reports {
         topK = $TopK
         seededDecisionIds = $SeededIds
         cleanupDone = $CleanupDone
+        llm = $LlmMetadata
         generatedAt = (Get-Date).ToString("o")
         rows = $Rows
     }
@@ -344,6 +356,7 @@ function Write-Reports {
     $lines += "- Warmup: ``$Warmup``"
     $lines += "- TopK: ``$TopK``"
     $lines += "- Cleanup done: ``$CleanupDone``"
+    $lines = Add-DevContextLlmReportMarkdownLines -Lines $lines -LlmMetadata $LlmMetadata
     $lines += ""
     $lines += "## Summary"
     $lines += ""
@@ -505,7 +518,7 @@ try {
     }
 }
 
-$report = Write-Reports -RunId $runId -Tag $tag -DecisionScales $DecisionScales -Rows $rows -SeededIds @($seededIds | ForEach-Object { [long]$_ }) -CleanupDone $cleanupDone -OutputDir $OutputDir
+$report = Write-Reports -RunId $runId -Tag $tag -DecisionScales $DecisionScales -Rows $rows -SeededIds @($seededIds | ForEach-Object { [long]$_ }) -CleanupDone $cleanupDone -LlmMetadata (Get-LlmReportMetadata) -OutputDir $OutputDir
 
 Write-Host ""
 Write-Host "Performance baseline complete"

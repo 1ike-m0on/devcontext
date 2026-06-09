@@ -37,6 +37,8 @@ Markdown/JSON reports under docs/reports.
     exit 0
 }
 
+. (Join-Path $PSScriptRoot "devcontext-report-metadata.ps1")
+
 function Resolve-RepoPath {
     param([string]$PathValue)
     if ([System.IO.Path]::IsPathRooted($PathValue)) {
@@ -85,6 +87,18 @@ function Invoke-DevContextApi {
         return $null
     }
     return $content | ConvertFrom-Json
+}
+
+function Get-LlmReportMetadata {
+    try {
+        $response = Invoke-DevContextApi -Method "Get" -Path "/api/settings/llm"
+        if ($null -ne $response -and $response.PSObject.Properties.Name -contains "success" -and -not $response.success) {
+            return New-DevContextLlmReportMetadata -MetadataError "$($response.errorCode): $($response.message)"
+        }
+        return New-DevContextLlmReportMetadata -Data $response.data
+    } catch {
+        return New-DevContextLlmReportMetadata -MetadataError $_.Exception.Message
+    }
 }
 
 function Write-TextFile {
@@ -614,6 +628,7 @@ function Write-Reports {
         [object]$Summary,
         [object[]]$Cases,
         [string]$FixtureRoot,
+        [object]$LlmMetadata,
         [string]$OutputDir
     )
     $resolvedOutputDir = Resolve-RepoPath $OutputDir
@@ -626,6 +641,7 @@ function Write-Reports {
     $payload = [pscustomobject]@{
         runId = $RunId
         baseUrl = $BaseUrl
+        llm = $LlmMetadata
         project = $Project
         fixtureRoot = $FixtureRoot
         generatedFiles = $Generation.generatedFiles
@@ -644,6 +660,7 @@ function Write-Reports {
     $lines += "- Base URL: ``$BaseUrl``"
     $lines += "- Project ID: ``$($Project.id)``"
     $lines += "- Fixture root: ``$FixtureRoot``"
+    $lines = Add-DevContextLlmReportMarkdownLines -Lines $lines -LlmMetadata $LlmMetadata
     $lines += ""
     $lines += "## Summary"
     $lines += ""
@@ -720,7 +737,7 @@ $generation = Generate-ContextAssets -ProjectId ([long]$project.id)
 Write-Host "Running context resolve evaluation with $($cases.Count) cases"
 $caseResults = Measure-Cases -ProjectId ([long]$project.id) -Cases $cases
 $summary = New-Summary -Cases $caseResults
-$report = Write-Reports -RunId $runId -Project $project -Generation $generation -Summary $summary -Cases $caseResults -FixtureRoot $fixtureRoot -OutputDir $OutputDir
+$report = Write-Reports -RunId $runId -Project $project -Generation $generation -Summary $summary -Cases $caseResults -FixtureRoot $fixtureRoot -LlmMetadata (Get-LlmReportMetadata) -OutputDir $OutputDir
 
 if (-not $KeepProject) {
     Write-Host "Benchmark fixture remains under target for report inspection."
