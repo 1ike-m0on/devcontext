@@ -7,8 +7,14 @@ on:
       - main
 
 jobs:
-  test:
+  backend:
+    name: Java backend tests
     runs-on: ubuntu-latest
+    env:
+      DEVCONTEXT_LLM_PROVIDER: mock
+      DEVCONTEXT_VECTOR_PROVIDER: jdbc
+      GEMINI_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
 
     steps:
       - name: Checkout
@@ -23,3 +29,42 @@ jobs:
 
       - name: Run tests
         run: mvn test
+
+  frontend:
+    name: React frontend build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Build frontend
+        run: npm run frontend:build
+
+  docs-guard:
+    name: Private docs guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify private docs are not tracked
+        shell: bash
+        run: |
+          set -euo pipefail
+          blocked_paths="$(git ls-files -- AGENTS.md docs .ai)"
+          if [[ -n "$blocked_paths" ]]; then
+            printf 'Private/local management docs must stay ignored, but these files are tracked:\n%s\n' "$blocked_paths"
+            exit 1
+          fi
