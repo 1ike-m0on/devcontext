@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: devcontext-backend
     ports:
       - "18080:18080"
     environment:
@@ -26,23 +25,44 @@ services:
       - ./data/devcontext:/app/data
       - ${DEVCONTEXT_PROJECTS_DIR:-./workspace/projects}:/workspace/projects
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18080/api/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: devcontext-frontend
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   qdrant:
-    image: qdrant/qdrant:latest
-    container_name: devcontext-qdrant
+    image: qdrant/qdrant:v1.18.1
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
       - ./data/qdrant:/qdrant/storage
+    healthcheck:
+      test: >
+        timeout 5 bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333;
+        printf "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
+        grep -q "200 OK" <&3'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
