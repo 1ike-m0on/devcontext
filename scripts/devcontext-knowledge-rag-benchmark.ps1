@@ -52,6 +52,8 @@ and writes Markdown/JSON reports under docs/reports.
     exit 0
 }
 
+. (Join-Path $PSScriptRoot "devcontext-report-metadata.ps1")
+
 function New-RunId {
     return (Get-Date).ToString("yyyyMMdd-HHmmss")
 }
@@ -164,6 +166,18 @@ function Invoke-DevContextApi {
         return $null
     }
     return $content | ConvertFrom-Json
+}
+
+function Get-LlmReportMetadata {
+    try {
+        $response = Invoke-DevContextApi -Method "Get" -Path "/api/settings/llm"
+        if ($null -ne $response -and $response.PSObject.Properties.Name -contains "success" -and -not $response.success) {
+            return New-DevContextLlmReportMetadata -MetadataError "$($response.errorCode): $($response.message)"
+        }
+        return New-DevContextLlmReportMetadata -Data $response.data
+    } catch {
+        return New-DevContextLlmReportMetadata -MetadataError $_.Exception.Message
+    }
 }
 
 function Write-TextFile {
@@ -851,6 +865,7 @@ function Write-Reports {
         [string]$ResolvedSourceRoot,
         [object]$IndexResult,
         [object[]]$CaseResults,
+        [object]$LlmMetadata,
         [string]$OutputDir
     )
     if (-not (Test-Path -LiteralPath $OutputDir)) {
@@ -888,6 +903,7 @@ function Write-Reports {
         runId = $RunId
         baseUrl = $BaseUrl
         casesPath = $CasesPath
+        llm = $LlmMetadata
         generatedAt = (Get-Date).ToString("o")
         indexResult = $IndexResult
         summary = $summary
@@ -906,6 +922,7 @@ function Write-Reports {
     $lines += "- Source type: ``$SourceType``"
     $lines += "- TopK default: ``$TopK``"
     $lines += "- Skip ask: ``$([bool]$SkipAsk)``"
+    $lines = Add-DevContextLlmReportMarkdownLines -Lines $lines -LlmMetadata $LlmMetadata
     $lines += ""
     $lines += "## Summary"
     $lines += ""
@@ -1063,7 +1080,7 @@ foreach ($case in $cases) {
     }
 }
 
-$report = Write-Reports -RunId $runId -ResolvedSourceId $resolvedSourceId -ResolvedSourceRoot $resolvedSourceRoot -IndexResult $indexResult -CaseResults $caseResults -OutputDir (Resolve-RepoPath $OutputDir)
+$report = Write-Reports -RunId $runId -ResolvedSourceId $resolvedSourceId -ResolvedSourceRoot $resolvedSourceRoot -IndexResult $indexResult -CaseResults $caseResults -LlmMetadata (Get-LlmReportMetadata) -OutputDir (Resolve-RepoPath $OutputDir)
 
 Write-Host ""
 Write-Host "Knowledge RAG acceptance benchmark complete"
