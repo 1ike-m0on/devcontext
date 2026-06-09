@@ -108,7 +108,7 @@ docker compose up -d --build
 启动后访问：
 
 - 产品前端：http://localhost:5173
-- 后端 API / smoke：http://localhost:18080
+- 后端 API / smoke/debug：http://localhost:18080
 - Qdrant：http://localhost:6333
 
 日常使用请从 React 产品前端 `http://localhost:5173` 进入。Spring Boot 的静态页面只作为 smoke/debug 入口，不作为正式产品 UI。
