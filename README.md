@@ -107,9 +107,11 @@ docker compose up -d --build
 
 启动后访问：
 
-- 前端：http://localhost:5173
-- 后端：http://localhost:18080
+- 产品前端：http://localhost:5173
+- 后端 API / smoke：http://localhost:18080
 - Qdrant：http://localhost:6333
+
+日常使用请从 React 产品前端 `http://localhost:5173` 进入。Spring Boot 的静态页面只作为 smoke/debug 入口，不作为正式产品 UI。
 
 Docker 模式下，后端运行在容器内，只能访问挂载进容器的项目目录。默认项目挂载目录是：
 
@@ -140,7 +142,15 @@ docker compose up -d --build
 
 ### Docker 模式切换 LLM
 
-Docker Compose 会读取项目根目录的 `.env`。如果要切换模型，不需要本地启动后端，只需要修改 `.env`，然后重启后端容器。
+推荐在 React 产品前端的“模型设置”中保存 provider、model 和 Gemini / DeepSeek API Key。保存会写入被 Git 忽略的 `config/devcontext.local.yml`，API 和页面只显示 key 状态，不返回明文 API Key。
+
+当前版本不做运行时热切换；保存后如果返回 `restartRequired=true`，请重启 backend 生效：
+
+```bash
+docker compose up -d backend
+```
+
+Docker Compose 仍会读取项目根目录的 `.env`。如果要手动切换模型，也可以修改 `.env`，然后重启后端容器。
 
 例如切到 DeepSeek：
 
@@ -150,7 +160,7 @@ DEEPSEEK_API_KEY=<your-api-key>
 DEEPSEEK_MODEL=deepseek-chat
 ```
 
-然后执行：
+手动修改 `.env` 后执行：
 
 ```bash
 docker compose up -d backend
@@ -184,11 +194,26 @@ LLM provider/model/key 状态和最近错误类型也可以单独查看：
 GET http://localhost:18080/api/settings/llm
 ```
 
-这些状态接口只返回 API Key 是否已配置，不会返回明文 API Key。
+也可以通过本地 API 保存设置：
+
+```http
+PUT http://localhost:18080/api/settings/llm
+Content-Type: application/json
+
+{
+  "provider": "gemini",
+  "model": "gemini-2.0-flash",
+  "geminiApiKey": "<your-api-key>"
+}
+```
+
+这些状态接口只返回 API Key 是否已配置，不会返回明文 API Key。保存后如果响应中 `restartRequired=true`，需要重启 backend 后才会生效。
 
 ## 使用真实模型
 
-推荐把 `.env.example` 复制为 `.env`，然后只改 `.env`：
+推荐先在 React 产品前端 `http://localhost:5173` 打开“模型设置”，保存 provider、model 和对应 API Key。DevContext 会写入被 Git 忽略的 `config/devcontext.local.yml`，并在响应中返回 `restartRequired=true` 提醒你重启 backend。
+
+也可以把 `.env.example` 复制为 `.env`，然后只改 `.env`：
 
 ```powershell
 Copy-Item .env.example .env

@@ -8,11 +8,61 @@ export type ApiEnvelope<T> = {
 export type Health = {
   service: string;
   status: string;
+  llm?: {
+    provider: string;
+    model: string;
+    status: string;
+    keyConfigured: boolean;
+    keyStatus: string;
+    lastErrorType?: string | null;
+  };
   llmProvider?: string;
   llmModel?: string;
   llmClient?: string;
   vectorProvider?: string;
   timestamp?: string;
+};
+
+export type LlmProviderStatus = {
+  provider: string;
+  model: string;
+  status: string;
+  keyRequired: boolean;
+  keyConfigured: boolean;
+  keyStatus: string;
+};
+
+export type PendingLlmSettings = {
+  provider: string;
+  model: string;
+  status: string;
+  keyConfigured: boolean;
+  keyStatus: string;
+  localConfigPath: string;
+};
+
+export type LlmSettings = {
+  provider: string;
+  model: string;
+  status: string;
+  keyStatus: string;
+  keyConfigured: boolean;
+  lastCallStatus: string;
+  lastErrorType?: string | null;
+  lastErrorMessage?: string | null;
+  lastCallAt?: string | null;
+  restartRequired: boolean;
+  pending?: PendingLlmSettings | null;
+  localConfigPath: string;
+  supportedProviders: LlmProviderStatus[];
+};
+
+export type LlmSettingsUpdate = {
+  provider: string;
+  model: string;
+  apiKey?: string | null;
+  geminiApiKey?: string | null;
+  deepseekApiKey?: string | null;
 };
 
 export type Project = {
@@ -295,6 +345,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<Health>("/api/health"),
+  llmSettings: () => request<LlmSettings>("/api/settings/llm"),
+  updateLlmSettings: (body: LlmSettingsUpdate) =>
+    request<LlmSettings>("/api/settings/llm", { method: "PUT", body: JSON.stringify(body) }),
   projects: () => request<Project[]>("/api/projects"),
   createProject: (body: { name: string; rootPath: string; defaultBranch: string }) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
