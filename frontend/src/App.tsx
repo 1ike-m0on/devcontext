@@ -41,6 +41,8 @@ import {
   KnowledgeQueryPlan,
   KnowledgeSearchResponse,
   KnowledgeSource,
+  LlmProviderStatus,
+  LlmSettings,
   Project,
   ProjectContextStatus,
   ContextGenerationResult,
@@ -68,7 +70,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-type View = "overview" | "review" | "decisions" | "knowledge" | "runs";
+type View = "overview" | "review" | "decisions" | "knowledge" | "runs" | "settings";
 
 const lifeServicePath = "C:\\Users\\lenovo\\Documents\\Codex\\2026-05-20\\life-service";
 const devContextPath = "D:\\CodeX\\DevContext";
@@ -82,6 +84,7 @@ function App() {
 
   const activeProjectId = asNumberOrNull(projectIdValue);
   const healthQuery = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 15000 });
+  const llmSettingsQuery = useQuery({ queryKey: ["llm-settings"], queryFn: api.llmSettings });
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: api.projects });
   const sourcesQuery = useQuery({ queryKey: ["knowledge-sources"], queryFn: api.sources });
   const contextQuery = useQuery({
@@ -139,6 +142,7 @@ function App() {
             <NavItem icon={Brain} label="决策记忆" active={activeView === "decisions"} onClick={() => setActiveView("decisions")} />
             <NavItem icon={Database} label="知识库" active={activeView === "knowledge"} onClick={() => setActiveView("knowledge")} />
             <NavItem icon={Activity} label="运行追踪" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
+            <NavItem icon={Settings2} label="模型设置" active={activeView === "settings"} onClick={() => setActiveView("settings")} />
           </nav>
           <div className="mt-auto grid gap-3">
             <HealthCard health={healthQuery.data} loading={healthQuery.isLoading} />
@@ -188,6 +192,13 @@ function App() {
               <KnowledgeWorkspace sources={sourcesQuery.data ?? []} onNotice={show} onOpenRun={openRun} />
             ) : null}
             {activeView === "runs" ? <RunWorkspace initialRunId={activeRunId} project={selectedProject} /> : null}
+            {activeView === "settings" ? (
+              <SettingsWorkspace
+                settings={llmSettingsQuery.data}
+                loading={llmSettingsQuery.isLoading}
+                onNotice={show}
+              />
+            ) : null}
           </div>
         </main>
       </div>
@@ -230,6 +241,7 @@ function TopBar({
     decisions: "决策记忆",
     knowledge: "知识库问答",
     runs: "运行追踪",
+    settings: "模型设置",
   };
 
   return (
@@ -1957,6 +1969,241 @@ function CitationList({ citations }: { citations: RagAnswerResult["citations"] }
   );
 }
 
+function SettingsWorkspace({
+  settings,
+  loading,
+  onNotice,
+}: {
+  settings?: LlmSettings;
+  loading: boolean;
+  onNotice: (message: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const providers = settings?.supportedProviders?.length
+    ? settings.supportedProviders
+    : defaultLlmProviders();
+  const pendingOrActive = settings?.pending ?? settings;
+  const [provider, setProvider] = useState(pendingOrActive?.provider ?? "mock");
+  const [model, setModel] = useState(pendingOrActive?.model ?? "mock-llm");
+  const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [deepseekApiKey, setDeepseekApiKey] = useState("");
+
+  useEffect(() => {
+    const next = settings?.pending ?? settings;
+    if (!next) return;
+    setProvider(next.provider);
+    setModel(next.model);
+  }, [settings?.provider, settings?.model, settings?.pending?.provider, settings?.pending?.model]);
+
+  const selectedProvider = providers.find((item) => item.provider === provider) ?? providers[0];
+
+  function selectProvider(nextProvider: string) {
+    setProvider(nextProvider);
+    const nextStatus = providers.find((item) => item.provider === nextProvider);
+    setModel(nextStatus?.model ?? "mock-llm");
+  }
+
+  const saveSettings = useMutation({
+    mutationFn: async () => {
+      const body: {
+        provider: string;
+        model: string;
+        geminiApiKey?: string | null;
+        deepseekApiKey?: string | null;
+      } = {
+        provider,
+        model: model.trim(),
+      };
+      if (provider === "gemini" && geminiApiKey.trim()) {
+        body.geminiApiKey = geminiApiKey.trim();
+      }
+      if (provider === "deepseek" && deepseekApiKey.trim()) {
+        body.deepseekApiKey = deepseekApiKey.trim();
+      }
+      return api.updateLlmSettings(body);
+    },
+    onSuccess: (result) => {
+      setGeminiApiKey("");
+      setDeepseekApiKey("");
+      void queryClient.invalidateQueries({ queryKey: ["llm-settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["health"] });
+      onNotice(result.restartRequired
+        ? "LLM 设置已保存。restartRequired=true，请重启 backend 生效。"
+        : "LLM 设置已保存，当前配置已一致。");
+    },
+    onError: (error) => onNotice(error instanceof Error ? error.message : "LLM 设置保存失败。"),
+  });
+
+  return (
+    <div className="grid gap-5">
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle>LLM 设置</CardTitle>
+                <CardDescription>本地配置写入 {settings?.localConfigPath ?? "config/devcontext.local.yml"}</CardDescription>
+              </div>
+              <Badge variant={settings?.restartRequired ? "warning" : "success"}>
+                {settings?.restartRequired ? "restartRequired=true" : "active"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-5">
+            {loading ? (
+              <EmptyState text="正在加载 LLM 设置。" />
+            ) : (
+              <>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <MetricTile label="当前 provider" value={settings?.provider ?? "-"} tone={settings?.status === "ready" ? "success" : "warning"} />
+                  <MetricTile label="当前 model" value={settings?.model ?? "-"} />
+                  <MetricTile label="key 状态" value={settings?.keyStatus ?? "-"} tone={settings?.keyConfigured ? "success" : "warning"} />
+                </div>
+
+                <div className="grid gap-4 rounded-lg border border-border bg-background p-4">
+                  <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
+                    <Label>
+                      Provider
+                      <select
+                        className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        value={provider}
+                        onChange={(event) => selectProvider(event.target.value)}
+                      >
+                        {providers.map((item) => (
+                          <option key={item.provider} value={item.provider}>
+                            {providerLabel(item.provider)}
+                          </option>
+                        ))}
+                      </select>
+                    </Label>
+                    <Label>
+                      Model
+                      <Input className="mt-1" value={model} onChange={(event) => setModel(event.target.value)} placeholder={selectedProvider?.model ?? "model"} />
+                    </Label>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Label>
+                      Gemini API key
+                      <Input
+                        className="mt-1"
+                        type="password"
+                        value={geminiApiKey}
+                        onChange={(event) => setGeminiApiKey(event.target.value)}
+                        placeholder="留空则不改 key"
+                        autoComplete="off"
+                      />
+                    </Label>
+                    <Label>
+                      DeepSeek API key
+                      <Input
+                        className="mt-1"
+                        type="password"
+                        value={deepseekApiKey}
+                        onChange={(event) => setDeepseekApiKey(event.target.value)}
+                        placeholder="留空则不改 key"
+                        autoComplete="off"
+                      />
+                    </Label>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={llmStatusBadge(selectedProvider?.status)}>{selectedProvider?.status ?? "pending"}</Badge>
+                      <Badge variant={selectedProvider?.keyConfigured ? "success" : selectedProvider?.keyRequired ? "warning" : "secondary"}>
+                        key {selectedProvider?.keyStatus ?? "unknown"}
+                      </Badge>
+                    </div>
+                    <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || !model.trim()}>
+                      {saveSettings.isPending ? <Loader2 className="size-4 animate-spin" /> : <Settings2 className="size-4" />}
+                      保存设置
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>状态</CardTitle>
+            <CardDescription>active 与 pending 分开显示</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="rounded-lg border border-border bg-background p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <CheckCircle2 className="size-4 text-emerald-200" />
+                当前生效
+              </div>
+              <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
+                <StateLine label="provider" value={settings?.provider ?? "-"} />
+                <StateLine label="model" value={settings?.model ?? "-"} />
+                <StateLine label="key" value={settings?.keyStatus ?? "-"} />
+                <StateLine label="最近调用" value={settings?.lastCallStatus ?? "-"} />
+                <StateLine label="最近错误" value={settings?.lastErrorType ?? "-"} />
+              </div>
+            </div>
+
+            <div className={cn(
+              "rounded-lg border p-4",
+              settings?.restartRequired ? "border-amber-400/30 bg-amber-400/10" : "border-border bg-background",
+            )}>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {settings?.restartRequired ? (
+                  <AlertTriangle className="size-4 text-amber-200" />
+                ) : (
+                  <ShieldCheck className="size-4 text-sky-200" />
+                )}
+                本地 pending
+              </div>
+              {settings?.pending ? (
+                <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
+                  <StateLine label="provider" value={settings.pending.provider} />
+                  <StateLine label="model" value={settings.pending.model} />
+                  <StateLine label="key" value={settings.pending.keyStatus} />
+                  <StateLine label="config" value={settings.pending.localConfigPath} />
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-muted-foreground">没有待重启生效的本地 LLM 配置。</p>
+              )}
+              {settings?.restartRequired ? (
+                <div className="mt-3 rounded-md border border-amber-400/25 bg-background px-3 py-2 text-sm text-amber-100">
+                  重启 backend 后生效。
+                </div>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+function defaultLlmProviders(): LlmProviderStatus[] {
+  return [
+    { provider: "mock", model: "mock-llm", status: "ready", keyRequired: false, keyConfigured: false, keyStatus: "not_required" },
+    { provider: "gemini", model: "gemini-2.0-flash", status: "missing_key", keyRequired: true, keyConfigured: false, keyStatus: "missing" },
+    { provider: "deepseek", model: "deepseek-chat", status: "missing_key", keyRequired: true, keyConfigured: false, keyStatus: "missing" },
+  ];
+}
+
+function providerLabel(provider: string) {
+  const labels: Record<string, string> = {
+    mock: "mock",
+    gemini: "Gemini",
+    deepseek: "DeepSeek",
+  };
+  return labels[provider] ?? provider;
+}
+
+function llmStatusBadge(status?: string): BadgeVariant {
+  if (status === "ready") return "success";
+  if (status === "missing_key") return "warning";
+  if (status === "unsupported_provider" || status === "failed") return "danger";
+  return "secondary";
+}
+
 function RunWorkspace({ initialRunId, project }: { initialRunId: number | null; project: Project | null }) {
   const [runId, setRunId] = useState(initialRunId ? String(initialRunId) : "");
   const [events, setEvents] = useState<AgentEvent[]>([]);
@@ -2132,6 +2379,9 @@ function ImportProjectDialog({
 }
 
 function HealthCard({ health, loading }: { health?: Health; loading: boolean }) {
+  const provider = health?.llm?.provider ?? health?.llmProvider ?? "llm";
+  const model = health?.llm?.model ?? health?.llmModel ?? "model";
+  const keyStatus = health?.llm?.keyStatus ? ` · key ${health.llm.keyStatus}` : "";
   return (
     <div className="rounded-lg border border-border bg-background p-3">
       <div className="flex items-center gap-2 text-sm font-medium">
@@ -2139,7 +2389,7 @@ function HealthCard({ health, loading }: { health?: Health; loading: boolean }) 
         {loading ? "检查服务中" : health ? "后端在线" : "后端离线"}
       </div>
       <div className="mt-3 grid gap-2 font-mono text-[11px] text-muted-foreground">
-        <div className="rounded-md bg-muted px-2 py-1">{health?.llmProvider ?? "llm"} · {health?.llmModel ?? "model"}</div>
+        <div className="rounded-md bg-muted px-2 py-1">{provider} · {model}{keyStatus}</div>
         <div className="rounded-md bg-muted px-2 py-1">vector · {health?.vectorProvider ?? "unknown"}</div>
       </div>
     </div>
