@@ -1,6 +1,7 @@
 package com.devcontext.application.memory;
 
 import com.devcontext.domain.decision.DecisionReuseRecord;
+import com.devcontext.domain.knowledge.KnowledgeEvidenceType;
 import com.devcontext.domain.knowledge.RetrievalRecord;
 import com.devcontext.domain.memory.Observation;
 import com.devcontext.domain.memory.ObservationLifecycle;
@@ -390,7 +391,7 @@ public class ObservationMapper {
                     JsonNode result = root.get(i);
                     topResults.add(metadata(
                             "filePath", sanitizer.metadataText(result.path("filePath").asText(null)),
-                            "evidenceTypes", result.path("evidenceTypes"),
+                            "evidenceTypes", canonicalEvidenceTypes(result.path("evidenceTypes")),
                             "fusedScore", result.path("fusedScore").isMissingNode() ? null : result.path("fusedScore").asDouble()
                     ));
                 }
@@ -400,6 +401,23 @@ public class ObservationMapper {
             metadata.put("resultJsonParseError", sanitizer.error(e.getMessage()));
         }
         return metadata;
+    }
+
+    private Object canonicalEvidenceTypes(JsonNode evidenceTypes) {
+        if (evidenceTypes == null || !evidenceTypes.isArray()) {
+            return evidenceTypes;
+        }
+        List<String> canonicalTypes = new ArrayList<>();
+        for (JsonNode evidenceType : evidenceTypes) {
+            String rawValue = evidenceType.asText(null);
+            if (rawValue == null || rawValue.isBlank()) {
+                continue;
+            }
+            canonicalTypes.add(KnowledgeEvidenceType.normalize(rawValue)
+                    .map(KnowledgeEvidenceType::canonicalName)
+                    .orElse(rawValue.trim()));
+        }
+        return canonicalTypes;
     }
 
     private Map<String, Object> metadata(Object... entries) {

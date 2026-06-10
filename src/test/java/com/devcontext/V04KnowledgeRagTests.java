@@ -157,6 +157,7 @@ class V04KnowledgeRagTests {
                 .getResponse()
                 .getContentAsString();
         JsonNode retrievalObservations = objectMapper.readTree(retrievalObservationResponse).path("data");
+        AtomicReference<JsonNode> retrievalObservation = new AtomicReference<>();
         assertThat(retrievalObservations)
                 .anySatisfy(observation -> {
                     assertThat(observation.path("sourceType").asText()).isEqualTo("retrieval_record");
@@ -164,7 +165,13 @@ class V04KnowledgeRagTests {
                     assertThat(observation.path("runId").asLong()).isEqualTo(runId);
                     assertThat(observation.path("retrievalId").asLong()).isEqualTo(retrievalRecordId);
                     assertThat(observation.path("provider").asText()).isEqualTo("test");
+                    retrievalObservation.set(observation);
                 });
+        JsonNode observationMetadata = objectMapper.readTree(retrievalObservation.get().path("metadataJson").asText());
+        assertThat(observationMetadata.path("topResults")).isNotEmpty();
+        assertThat(observationMetadata.path("topResults").get(0).path("evidenceTypes"))
+                .isNotEmpty()
+                .allSatisfy(type -> assertThat(type.asText()).matches("[A-Z_]+"));
         assertThat(runJson.path("events"))
                 .extracting(event -> event.path("eventType").asText())
                 .containsExactly(
