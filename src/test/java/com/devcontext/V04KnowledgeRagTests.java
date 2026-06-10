@@ -129,6 +129,7 @@ class V04KnowledgeRagTests {
         assertThat(runId).isPositive();
         assertThat(askJson.path("retrievalRecordId").asLong()).isPositive();
         assertThat(askJson.path("queryPlan").path("noAnswerPolicy").asText()).isEqualTo("require_retrieved_context");
+        assertThat(askJson.path("evidenceEvaluation").path("status").asText()).isEqualTo("sufficient");
         assertThat(askJson.path("answer").asText()).contains("[S1]");
         assertThat(askJson.path("citations")).isNotEmpty();
         assertThat(llmClient.lastRequest().get().prompt())
@@ -180,6 +181,7 @@ class V04KnowledgeRagTests {
                         "KNOWLEDGE_QUERY_PLAN_BUILT",
                         "KNOWLEDGE_RETRIEVED",
                         "KNOWLEDGE_EVIDENCE_RETRIEVED",
+                        "KNOWLEDGE_EVIDENCE_EVALUATED",
                         "PROMPT_BUILT",
                         "LLM_CALLED",
                         "RAG_ANSWER_GENERATED",
