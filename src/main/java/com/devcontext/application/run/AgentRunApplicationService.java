@@ -1,5 +1,6 @@
 package com.devcontext.application.run;
 
+import com.devcontext.application.memory.ObservationCaptureService;
 import com.devcontext.common.error.ApiException;
 import com.devcontext.config.DevContextLlmProperties;
 import com.devcontext.domain.run.AgentEvent;
@@ -18,15 +19,18 @@ public class AgentRunApplicationService {
     private final AgentRunRepository runRepository;
     private final AgentEventRepository eventRepository;
     private final DevContextLlmProperties llmProperties;
+    private final ObservationCaptureService observationCaptureService;
 
     public AgentRunApplicationService(
             AgentRunRepository runRepository,
             AgentEventRepository eventRepository,
-            DevContextLlmProperties llmProperties
+            DevContextLlmProperties llmProperties,
+            ObservationCaptureService observationCaptureService
     ) {
         this.runRepository = runRepository;
         this.eventRepository = eventRepository;
         this.llmProperties = llmProperties;
+        this.observationCaptureService = observationCaptureService;
     }
 
     public AgentRun startRun(Long projectId, String runType, String promptVersion) {
@@ -48,6 +52,7 @@ public class AgentRunApplicationService {
                 null
         );
         AgentRun saved = runRepository.save(run);
+        observationCaptureService.captureAgentRun(saved);
         recordEvent(saved.id(), "RUN_STARTED", runType, "Run started", "success", null, null);
         return saved;
     }
@@ -71,6 +76,7 @@ public class AgentRunApplicationService {
                 finishedAt
         );
         AgentRun saved = runRepository.update(finished);
+        observationCaptureService.captureAgentRun(saved);
         recordEvent(saved.id(), "RUN_FINISHED", saved.runType(), "Run finished", "success", durationMs, null);
         return saved;
     }
@@ -94,6 +100,7 @@ public class AgentRunApplicationService {
                 finishedAt
         );
         AgentRun saved = runRepository.update(failed);
+        observationCaptureService.captureAgentRun(saved);
         recordEvent(saved.id(), "RUN_FINISHED", saved.runType(), "Run failed", "failed", durationMs, errorMessage);
         return saved;
     }
@@ -110,7 +117,9 @@ public class AgentRunApplicationService {
                 errorMessage,
                 Instant.now()
         );
-        return eventRepository.save(event);
+        AgentEvent saved = eventRepository.save(event);
+        observationCaptureService.captureAgentEvent(saved);
+        return saved;
     }
 
     public AgentRun getRun(Long runId) {

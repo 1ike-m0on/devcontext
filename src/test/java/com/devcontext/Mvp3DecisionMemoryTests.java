@@ -2,6 +2,7 @@ package com.devcontext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -136,8 +137,9 @@ class Mvp3DecisionMemoryTests {
 
         JsonNode adviceJson = objectMapper.readTree(adviceResponse).path("data");
         long runId = adviceJson.path("runId").asLong();
+        long reuseRecordId = adviceJson.path("reuseRecordId").asLong();
         assertThat(runId).isPositive();
-        assertThat(adviceJson.path("reuseRecordId").asLong()).isPositive();
+        assertThat(reuseRecordId).isPositive();
         assertThat(adviceJson.path("advice").asText()).contains("Reuse Advice");
         assertThat(adviceJson.path("matchedDecisions"))
                 .anySatisfy(match -> assertThat(match.path("decision").path("id").asLong()).isEqualTo(decisionId));
@@ -163,6 +165,31 @@ class Mvp3DecisionMemoryTests {
                         "REUSE_ADVICE_SAVED",
                         "RUN_FINISHED"
                 );
+
+        mockMvc.perform(patch("/api/decision-reuse-records/{recordId}/feedback", reuseRecordId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "accepted",
+                                  "accepted": true,
+                                  "userFeedback": "Useful reuse advice for the new order ledger."
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        String feedbackObservationResponse = mockMvc.perform(get("/api/observations")
+                        .param("runId", String.valueOf(runId))
+                        .param("taskType", "DECISION_REUSE_FEEDBACK"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode feedbackObservations = objectMapper.readTree(feedbackObservationResponse).path("data");
+        assertThat(feedbackObservations).hasSize(1);
+        assertThat(feedbackObservations.get(0).path("sourceType").asText()).isEqualTo("decision_reuse_feedback");
+        assertThat(feedbackObservations.get(0).path("sourceKey").asText())
+                .startsWith("decision_reuse_feedback:" + reuseRecordId + ":accepted:true:");
+        assertThat(feedbackObservations.get(0).path("decisionReuseRecordId").asLong()).isEqualTo(reuseRecordId);
     }
 
     @TestConfiguration

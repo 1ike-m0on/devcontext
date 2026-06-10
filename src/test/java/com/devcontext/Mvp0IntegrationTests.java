@@ -120,6 +120,27 @@ class Mvp0IntegrationTests {
                 .orElseThrow()
                 .inputSummary()).isEqualTo("mock/mock-llm");
 
+        String observationResponse = mockMvc.perform(get("/api/agent-runs/{runId}/observations", result.runId()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode observations = objectMapper.readTree(observationResponse).path("data");
+        assertThat(observations)
+                .extracting(observation -> observation.path("sourceType").asText())
+                .contains("agent_run", "agent_event");
+        assertThat(observations)
+                .filteredOn(observation -> "agent_run".equals(observation.path("sourceType").asText()))
+                .first()
+                .satisfies(observation -> {
+                    assertThat(observation.path("sourceKey").asText()).isEqualTo("agent_run:" + result.runId());
+                    assertThat(observation.path("sourceStatus").asText()).isEqualTo("success");
+                    assertThat(observation.path("provider").asText()).isEqualTo("mock");
+                    assertThat(observation.path("modelName").asText()).isEqualTo("mock-llm");
+                    assertThat(observation.path("runId").asLong()).isEqualTo(result.runId());
+                });
+
         Project updated = projectService.updateProject(project.id(), "renamed-mvp0-project", projectRoot.toString(), "develop");
         assertThat(updated.name()).isEqualTo("renamed-mvp0-project");
         assertThat(updated.defaultBranch()).isEqualTo("develop");

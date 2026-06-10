@@ -2,6 +2,7 @@ package com.devcontext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.devcontext.application.memory.ObservationCaptureService;
 import com.devcontext.application.run.AgentRunApplicationService;
 import com.devcontext.config.DevContextLlmProperties;
 import com.devcontext.domain.run.AgentEvent;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class AgentRunApplicationServiceTests {
 
@@ -50,7 +52,8 @@ class AgentRunApplicationServiceTests {
     private void assertRunProvenance(DevContextLlmProperties properties, String provider, String modelName) {
         InMemoryRunRepository runRepository = new InMemoryRunRepository();
         InMemoryEventRepository eventRepository = new InMemoryEventRepository();
-        AgentRunApplicationService service = new AgentRunApplicationService(runRepository, eventRepository, properties);
+        ObservationCaptureService observationCaptureService = Mockito.mock(ObservationCaptureService.class);
+        AgentRunApplicationService service = new AgentRunApplicationService(runRepository, eventRepository, properties, observationCaptureService);
 
         AgentRun run = service.startRun(7L, "LLM_TEST", "test-prompt");
 
