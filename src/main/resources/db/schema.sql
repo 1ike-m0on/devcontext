@@ -71,6 +71,21 @@ CREATE TABLE IF NOT EXISTS context_document (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_context_document_project_path
 ON context_document (project_id, file_path);
 
+CREATE TABLE IF NOT EXISTS project_profile (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    facts_json TEXT NOT NULL,
+    warnings_json TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_profile_project_id
+ON project_profile (project_id);
+
 CREATE TABLE IF NOT EXISTS review_record (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
