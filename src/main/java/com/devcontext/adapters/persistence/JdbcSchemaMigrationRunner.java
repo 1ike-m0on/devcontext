@@ -29,6 +29,7 @@ public class JdbcSchemaMigrationRunner {
                 """);
         createObservationTable();
         createProjectProfileTable();
+        createProjectGraphTables();
     }
 
     private void createObservationTable() {
@@ -114,6 +115,61 @@ public class JdbcSchemaMigrationRunner {
         jdbcTemplate.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_profile_project_id
                 ON project_profile (project_id)
+                """);
+    }
+
+    private void createProjectGraphTables() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS project_graph_node (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    node_type TEXT NOT NULL,
+                    stable_key TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    source_path TEXT,
+                    evidence_type TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_reliability TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_project_graph_node_key
+                ON project_graph_node (project_id, stable_key)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_project_graph_node_source_path
+                ON project_graph_node (project_id, source_path)
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS project_graph_edge (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    edge_type TEXT NOT NULL,
+                    stable_key TEXT NOT NULL,
+                    from_node_key TEXT NOT NULL,
+                    to_node_key TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    source_path TEXT,
+                    evidence_type TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_reliability TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_project_graph_edge_key
+                ON project_graph_edge (project_id, stable_key)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_project_graph_edge_from
+                ON project_graph_edge (project_id, from_node_key)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_project_graph_edge_to
+                ON project_graph_edge (project_id, to_node_key)
                 """);
     }
 
