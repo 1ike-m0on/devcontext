@@ -2,6 +2,7 @@ package com.devcontext.application.review;
 
 import com.devcontext.application.decision.DecisionSearchCommand;
 import com.devcontext.application.decision.DecisionSearchService;
+import com.devcontext.application.memory.ObservationCaptureService;
 import com.devcontext.application.project.ProjectApplicationService;
 import com.devcontext.application.review.context.ReviewContextAssembler;
 import com.devcontext.application.review.context.ReviewContextRequest;
@@ -63,6 +64,7 @@ public class ReviewApplicationService {
     private final ReviewRecordRepository reviewRecordRepository;
     private final ReviewIssueRepository reviewIssueRepository;
     private final ReviewReportStore reviewReportStore;
+    private final ObservationCaptureService observationCaptureService;
 
     public ReviewApplicationService(
             ProjectApplicationService projectService,
@@ -77,7 +79,8 @@ public class ReviewApplicationService {
             AgentRunApplicationService runService,
             ReviewRecordRepository reviewRecordRepository,
             ReviewIssueRepository reviewIssueRepository,
-            ReviewReportStore reviewReportStore
+            ReviewReportStore reviewReportStore,
+            ObservationCaptureService observationCaptureService
     ) {
         this.projectService = projectService;
         this.gitDiffProvider = gitDiffProvider;
@@ -92,6 +95,7 @@ public class ReviewApplicationService {
         this.reviewRecordRepository = reviewRecordRepository;
         this.reviewIssueRepository = reviewIssueRepository;
         this.reviewReportStore = reviewReportStore;
+        this.observationCaptureService = observationCaptureService;
     }
 
     public ReviewCreateResult createReview(Long projectId, CreateReviewCommand command) {
@@ -164,11 +168,13 @@ public class ReviewApplicationService {
                     null,
                     Instant.now()
             ));
+            observationCaptureService.captureReviewRecord(saved);
             List<ReviewIssue> issues = saveIssues(saved.id(), report.issues());
             runService.recordEvent(run.id(), "REVIEW_ISSUES_SAVED", "parsed issues", issues.size() + " issues saved", "success", null, null);
 
             String reportPath = reviewReportStore.writeReport(project.rootPath(), saved.id(), report.markdown());
             ReviewRecord updated = reviewRecordRepository.updateReportPath(saved.id(), reportPath);
+            observationCaptureService.captureReviewRecord(updated);
 
             runService.finishRun(run, response.inputTokenEstimate(), response.outputTokenEstimate());
             return new ReviewCreateResult(updated.id(), run.id(), updated.score(), updated.summary(), updated.reportPath(), diff.truncated());
@@ -209,6 +215,8 @@ public class ReviewApplicationService {
         ReviewIssue updated = reviewIssueRepository.updateStatus(issueId, normalized, note);
         ReviewRecord review = reviewRecordRepository.findById(existing.reviewId())
                 .orElseThrow(() -> new ApiException("REVIEW_NOT_FOUND", "Review not found", HttpStatus.NOT_FOUND));
+        observationCaptureService.captureReviewIssue(updated);
+        observationCaptureService.captureReviewFeedback(updated);
         runService.recordEvent(
                 review.runId(),
                 "REVIEW_ISSUE_STATUS_UPDATED",
@@ -456,22 +464,26 @@ public class ReviewApplicationService {
     private List<ReviewIssue> saveIssues(Long reviewId, List<ReviewIssueDraft> drafts) {
         Instant now = Instant.now();
         return drafts.stream()
-                .map(draft -> reviewIssueRepository.save(new ReviewIssue(
-                        null,
-                        reviewId,
-                        draft.severity(),
-                        draft.title(),
-                        draft.filePath(),
-                        draft.lineNumber(),
-                        draft.description(),
-                        draft.impact(),
-                        draft.suggestion(),
-                        draft.confidence(),
-                        "pending",
-                        null,
-                        now,
-                        now
-                )))
+                .map(draft -> {
+                    ReviewIssue saved = reviewIssueRepository.save(new ReviewIssue(
+                            null,
+                            reviewId,
+                            draft.severity(),
+                            draft.title(),
+                            draft.filePath(),
+                            draft.lineNumber(),
+                            draft.description(),
+                            draft.impact(),
+                            draft.suggestion(),
+                            draft.confidence(),
+                            "pending",
+                            null,
+                            now,
+                            now
+                    ));
+                    observationCaptureService.captureReviewIssue(saved);
+                    return saved;
+                })
                 .toList();
     }
 

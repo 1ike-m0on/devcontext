@@ -1,5 +1,6 @@
 package com.devcontext.application.decision;
 
+import com.devcontext.application.memory.ObservationCaptureService;
 import com.devcontext.application.run.AgentRunApplicationService;
 import com.devcontext.common.error.ApiException;
 import com.devcontext.config.DevContextLlmProperties;
@@ -55,6 +56,7 @@ public class DecisionMemoryApplicationService {
     private final LlmClient llmClient;
     private final DevContextLlmProperties llmProperties;
     private final AgentRunApplicationService runService;
+    private final ObservationCaptureService observationCaptureService;
 
     public DecisionMemoryApplicationService(
             DecisionCardRepository decisionCardRepository,
@@ -64,7 +66,8 @@ public class DecisionMemoryApplicationService {
             DecisionPromptBuilder promptBuilder,
             LlmClient llmClient,
             DevContextLlmProperties llmProperties,
-            AgentRunApplicationService runService
+            AgentRunApplicationService runService,
+            ObservationCaptureService observationCaptureService
     ) {
         this.decisionCardRepository = decisionCardRepository;
         this.reuseRecordRepository = reuseRecordRepository;
@@ -74,6 +77,7 @@ public class DecisionMemoryApplicationService {
         this.llmClient = llmClient;
         this.llmProperties = llmProperties;
         this.runService = runService;
+        this.observationCaptureService = observationCaptureService;
     }
 
     public DecisionCreateResult createDecision(CreateDecisionCommand command) {
@@ -296,6 +300,7 @@ public class DecisionMemoryApplicationService {
         String status = normalizeReuseStatus(command.status(), command.accepted());
         Boolean accepted = acceptedFromReuseStatus(status);
         DecisionReuseRecord updated = reuseRecordRepository.updateFeedback(command.recordId(), status, accepted, feedback);
+        observationCaptureService.captureDecisionReuseFeedback(updated);
         if (updated.runId() != null) {
             runService.recordEvent(
                     updated.runId(),

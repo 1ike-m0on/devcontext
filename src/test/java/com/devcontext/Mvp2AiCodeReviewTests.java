@@ -181,6 +181,26 @@ class Mvp2AiCodeReviewTests {
         assertThat(events.get(11).path("inputSummary").asText()).contains("pending -> accepted");
         assertThat(events.get(11).path("outputSummary").asText()).contains("Valid issue for MVP2 test.");
 
+        String observationResponse = mockMvc.perform(get("/api/observations")
+                        .param("reviewId", String.valueOf(reviewId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode observations = objectMapper.readTree(observationResponse).path("data");
+        assertThat(observations)
+                .extracting(observation -> observation.path("sourceType").asText())
+                .contains("review_record", "review_issue", "review_feedback");
+        assertThat(observations)
+                .filteredOn(observation -> "review_feedback".equals(observation.path("sourceType").asText()))
+                .first()
+                .satisfies(observation -> {
+                    assertThat(observation.path("sourceStatus").asText()).isEqualTo("accepted");
+                    assertThat(observation.path("reviewId").asLong()).isEqualTo(reviewId);
+                    assertThat(observation.path("issueId").asLong()).isEqualTo(issueId);
+                    assertThat(observation.path("summary").asText()).contains("Valid issue for MVP2 test.");
+                });
+
         String runResponse = mockMvc.perform(get("/api/agent-runs/{runId}", runId))
                 .andExpect(status().isOk())
                 .andReturn()

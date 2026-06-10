@@ -27,6 +27,66 @@ public class JdbcSchemaMigrationRunner {
                 CREATE INDEX IF NOT EXISTS idx_decision_reuse_record_run_id
                 ON decision_reuse_record (run_id)
                 """);
+        createObservationTable();
+    }
+
+    private void createObservationTable() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS observation (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER,
+                    source_type TEXT NOT NULL,
+                    source_record_id TEXT NOT NULL,
+                    source_key TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    lifecycle TEXT NOT NULL,
+                    source_status TEXT,
+                    title TEXT NOT NULL,
+                    summary TEXT,
+                    occurred_at TEXT NOT NULL,
+                    provider TEXT,
+                    model_name TEXT,
+                    error_type TEXT,
+                    error_message_summary TEXT,
+                    run_id INTEGER,
+                    event_id INTEGER,
+                    retrieval_id INTEGER,
+                    review_id INTEGER,
+                    issue_id INTEGER,
+                    decision_reuse_record_id INTEGER,
+                    report_run_id TEXT,
+                    report_path TEXT,
+                    relation_json TEXT NOT NULL DEFAULT '{}',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    privacy_level TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_observation_source_key
+                ON observation (source_type, source_key)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_observation_project_time
+                ON observation (project_id, occurred_at)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_observation_run_id
+                ON observation (run_id)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_observation_review_id
+                ON observation (review_id)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_observation_retrieval_id
+                ON observation (retrieval_id)
+                """);
+        jdbcTemplate.execute("""
+                CREATE INDEX IF NOT EXISTS idx_observation_task_lifecycle_time
+                ON observation (task_type, lifecycle, occurred_at)
+                """);
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String definition) {

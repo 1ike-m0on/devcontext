@@ -1,5 +1,6 @@
 package com.devcontext.application.knowledge;
 
+import com.devcontext.application.memory.ObservationCaptureService;
 import com.devcontext.common.error.ApiException;
 import com.devcontext.domain.knowledge.EmbeddingVector;
 import com.devcontext.domain.knowledge.KeywordSearchHit;
@@ -40,6 +41,7 @@ public class KnowledgeSearchApplicationService {
     private final KnowledgeQueryPlanner queryPlanner;
     private final KnowledgeEvidenceClassifier evidenceClassifier;
     private final ObjectMapper objectMapper;
+    private final ObservationCaptureService observationCaptureService;
 
     public KnowledgeSearchApplicationService(
             KeywordSearchEngine keywordSearchEngine,
@@ -49,7 +51,8 @@ public class KnowledgeSearchApplicationService {
             RetrievalRecordRepository retrievalRecordRepository,
             KnowledgeQueryPlanner queryPlanner,
             KnowledgeEvidenceClassifier evidenceClassifier,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ObservationCaptureService observationCaptureService
     ) {
         this.keywordSearchEngine = keywordSearchEngine;
         this.embeddingClient = embeddingClient;
@@ -59,6 +62,7 @@ public class KnowledgeSearchApplicationService {
         this.queryPlanner = queryPlanner;
         this.evidenceClassifier = evidenceClassifier;
         this.objectMapper = objectMapper;
+        this.observationCaptureService = observationCaptureService;
     }
 
     public KnowledgeSearchResponse search(KnowledgeSearchCommand command) {
@@ -91,6 +95,7 @@ public class KnowledgeSearchApplicationService {
                 writeJson(results),
                 Instant.now()
         ));
+        observationCaptureService.captureRetrievalRecord(record);
         return new KnowledgeSearchResponse(record.id(), query, rewrittenQuery, queryPlan, results);
     }
 

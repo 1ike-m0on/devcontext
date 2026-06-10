@@ -149,6 +149,22 @@ class V04KnowledgeRagTests {
         assertThat(runJson.path("run").path("provider").asText()).isEqualTo("test");
         assertThat(runJson.path("run").path("modelName").asText()).isEqualTo("mock-llm");
         assertThat(runJson.path("retrievalRecords")).hasSize(1);
+        long retrievalRecordId = askJson.path("retrievalRecordId").asLong();
+        String retrievalObservationResponse = mockMvc.perform(get("/api/observations")
+                        .param("retrievalId", String.valueOf(retrievalRecordId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode retrievalObservations = objectMapper.readTree(retrievalObservationResponse).path("data");
+        assertThat(retrievalObservations)
+                .anySatisfy(observation -> {
+                    assertThat(observation.path("sourceType").asText()).isEqualTo("retrieval_record");
+                    assertThat(observation.path("sourceKey").asText()).isEqualTo("retrieval_record:" + retrievalRecordId);
+                    assertThat(observation.path("runId").asLong()).isEqualTo(runId);
+                    assertThat(observation.path("retrievalId").asLong()).isEqualTo(retrievalRecordId);
+                    assertThat(observation.path("provider").asText()).isEqualTo("test");
+                });
         assertThat(runJson.path("events"))
                 .extracting(event -> event.path("eventType").asText())
                 .containsExactly(

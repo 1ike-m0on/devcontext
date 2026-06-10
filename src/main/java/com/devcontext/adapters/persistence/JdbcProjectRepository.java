@@ -94,6 +94,7 @@ public class JdbcProjectRepository implements ProjectRepository {
     @Override
     @Transactional
     public void deleteById(Long id) {
+        jdbcTemplate.update("DELETE FROM observation WHERE project_id = ?", id);
         jdbcTemplate.update("""
                 DELETE FROM review_issue
                 WHERE review_id IN (SELECT id FROM review_record WHERE project_id = ?)
