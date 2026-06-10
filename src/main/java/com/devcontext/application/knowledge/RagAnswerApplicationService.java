@@ -2,6 +2,7 @@ package com.devcontext.application.knowledge;
 
 import com.devcontext.application.run.AgentRunApplicationService;
 import com.devcontext.config.DevContextLlmProperties;
+import com.devcontext.domain.knowledge.EvidenceEvaluation;
 import com.devcontext.domain.knowledge.KnowledgeRunDetail;
 import com.devcontext.domain.knowledge.KnowledgeSearchResponse;
 import com.devcontext.domain.knowledge.RagAnswerResult;
@@ -22,6 +23,7 @@ public class RagAnswerApplicationService {
     private final DevContextLlmProperties llmProperties;
     private final AgentRunApplicationService runService;
     private final RetrievalRecordRepository retrievalRecordRepository;
+    private final KnowledgeEvidenceEvaluationService evidenceEvaluationService;
 
     public RagAnswerApplicationService(
             KnowledgeSearchApplicationService searchService,
@@ -29,7 +31,8 @@ public class RagAnswerApplicationService {
             LlmClient llmClient,
             DevContextLlmProperties llmProperties,
             AgentRunApplicationService runService,
-            RetrievalRecordRepository retrievalRecordRepository
+            RetrievalRecordRepository retrievalRecordRepository,
+            KnowledgeEvidenceEvaluationService evidenceEvaluationService
     ) {
         this.searchService = searchService;
         this.promptBuilder = promptBuilder;
@@ -37,6 +40,7 @@ public class RagAnswerApplicationService {
         this.llmProperties = llmProperties;
         this.runService = runService;
         this.retrievalRecordRepository = retrievalRecordRepository;
+        this.evidenceEvaluationService = evidenceEvaluationService;
     }
 
     public RagAnswerResult ask(RagAskCommand command) {
@@ -52,6 +56,31 @@ public class RagAnswerApplicationService {
             runService.recordEvent(run.id(), "KNOWLEDGE_RETRIEVED", searchResponse.rewrittenQuery(), searchResponse.results().size() + " chunks retrieved", "success", null, null);
             runService.recordEvent(run.id(), "KNOWLEDGE_EVIDENCE_RETRIEVED", searchResponse.queryPlan().requiredEvidenceTypes().toString(), evidenceDistribution(searchResponse), "success", null, null);
 
+            EvidenceEvaluation evidenceEvaluation = evidenceEvaluationService.evaluate(searchResponse);
+            runService.recordEvent(
+                    run.id(),
+                    "KNOWLEDGE_EVIDENCE_EVALUATED",
+                    evidenceEvaluation.requiredEvidenceTypes().toString(),
+                    evaluationSummary(evidenceEvaluation),
+                    "success",
+                    null,
+                    null
+            );
+            if (evidenceEvaluation.noAnswerRequired()) {
+                String answer = evidenceEvaluationService.insufficientEvidenceAnswer(evidenceEvaluation);
+                runService.finishRun(run, 0, 0);
+                return new RagAnswerResult(
+                        run.id(),
+                        searchResponse.retrievalRecordId(),
+                        searchResponse.query(),
+                        searchResponse.rewrittenQuery(),
+                        searchResponse.queryPlan(),
+                        evidenceEvaluation,
+                        answer,
+                        searchResponse.results()
+                );
+            }
+
             String prompt = promptBuilder.build(searchResponse.query(), searchResponse.rewrittenQuery(), searchResponse.queryPlan(), searchResponse.results());
             runService.recordEvent(run.id(), "PROMPT_BUILT", "knowledge RAG prompt", prompt.length() + " chars", "success", null, null);
 
@@ -65,6 +94,7 @@ public class RagAnswerApplicationService {
                     searchResponse.query(),
                     searchResponse.rewrittenQuery(),
                     searchResponse.queryPlan(),
+                    evidenceEvaluation,
                     response.content(),
                     searchResponse.results()
             );
@@ -87,5 +117,12 @@ public class RagAnswerApplicationService {
                 .flatMap(result -> result.evidenceTypes().stream())
                 .collect(Collectors.groupingBy(Enum::name, Collectors.counting()))
                 .toString();
+    }
+
+    private String evaluationSummary(EvidenceEvaluation evaluation) {
+        return evaluation.status()
+                + "; matchedRequired=" + evaluation.matchedRequiredEvidenceTypes()
+                + "; missingRequired=" + evaluation.missingRequiredEvidenceTypes()
+                + "; matchedPreferred=" + evaluation.matchedPreferredEvidenceTypes();
     }
 }

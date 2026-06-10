@@ -8,6 +8,7 @@ public record RagAnswerResult(
         String query,
         String rewrittenQuery,
         KnowledgeQueryPlan queryPlan,
+        EvidenceEvaluation evidenceEvaluation,
         String answer,
         List<KnowledgeSearchResult> citations
 ) {
