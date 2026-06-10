@@ -28,6 +28,7 @@ public class JdbcSchemaMigrationRunner {
                 ON decision_reuse_record (run_id)
                 """);
         createObservationTable();
+        createProjectProfileTable();
     }
 
     private void createObservationTable() {
@@ -94,6 +95,26 @@ public class JdbcSchemaMigrationRunner {
             return;
         }
         jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
+    }
+
+    private void createProjectProfileTable() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS project_profile (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    facts_json TEXT NOT NULL,
+                    warnings_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_project_profile_project_id
+                ON project_profile (project_id)
+                """);
     }
 
     private boolean hasColumn(String tableName, String columnName) {
