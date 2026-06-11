@@ -14,6 +14,7 @@ public record KnowledgeSearchResult(
         double keywordScore,
         double vectorScore,
         double fusedScore,
-        List<KnowledgeEvidenceType> evidenceTypes
+        List<KnowledgeEvidenceType> evidenceTypes,
+        List<String> scoreReasons
 ) {
 }
