@@ -107,8 +107,8 @@ class Mvp2AiCodeReviewTests {
                 .contains("pure speculation belongs in recommendations, not issues")
                 .contains("Do not report ORM lazy-loading, transaction-proxy, distributed-lock, cache-staleness, or concurrency assumptions")
                 .contains("First decide whether the diff is a safe defensive change")
-                .contains("Use REVIEW_FEEDBACK_MEMORY to calibrate precision")
-                .contains("Do not repeat false_positive/rejected feedback patterns")
+                .contains("Use REVIEW_FEEDBACK_MEMORY signals to calibrate precision")
+                .contains("Do not repeat false_positive_pattern entries")
                 .contains("Return at most 4 issues");
 
         String detailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", reviewId))
@@ -529,6 +529,86 @@ class Mvp2AiCodeReviewTests {
     }
 
     @Test
+    void acceptedReviewFeedbackBecomesConfirmedReviewMemorySignal() throws Exception {
+        createReviewFixture(projectRoot);
+        Project project = projectService.createProject("confirmed-feedback-review-project", projectRoot.toString(), "main");
+
+        String firstCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "manual",
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/null-risk",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        long firstReviewId = objectMapper.readTree(firstCreateResponse).path("data").path("reviewId").asLong();
+        String firstDetailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", firstReviewId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        long issueId = objectMapper.readTree(firstDetailResponse).path("data").path("issues").get(0).path("id").asLong();
+
+        mockMvc.perform(patch("/api/review-issues/{issueId}", issueId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "accepted",
+                                  "note": "Confirmed nullable repository lookup pattern for this project."
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        String secondCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "manual",
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/another-null-risk",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        long secondReviewId = objectMapper.readTree(secondCreateResponse).path("data").path("reviewId").asLong();
+        String prompt = llmClient.lastRequest().get().prompt();
+        assertThat(prompt)
+                .contains("Review memory signals from this project's prior human code-review feedback.")
+                .contains("Confirmed issue patterns")
+                .contains("[confirmed_issue_pattern] status=accepted")
+                .contains("projectId=" + project.id())
+                .contains("reviewId=" + firstReviewId)
+                .contains("issueId=" + issueId)
+                .contains("Confirmed nullable repository lookup pattern for this project.");
+
+        String eventsResponse = mockMvc.perform(get("/api/reviews/{reviewId}/events", secondReviewId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
+        assertThat(events)
+                .filteredOn(event -> "REVIEW_FEEDBACK_MEMORY_LOADED".equals(event.path("eventType").asText()))
+                .first()
+                .satisfies(event -> assertThat(event.path("outputSummary").asText())
+                        .contains("1 confirmed patterns, 0 false-positive patterns"));
+    }
+
+    @Test
     void injectsRecentHumanReviewFeedbackIntoNextReviewPrompt() throws Exception {
         createReviewFixture(projectRoot);
         Project project = projectService.createProject("feedback-aware-review-project", projectRoot.toString(), "main");
@@ -585,11 +665,14 @@ class Mvp2AiCodeReviewTests {
 
         long secondReviewId = objectMapper.readTree(secondCreateResponse).path("data").path("reviewId").asLong();
         assertThat(llmClient.lastRequest().get().prompt())
-                .contains("Recent human feedback for this project's code reviews.")
-                .contains("Noise patterns")
-                .contains("[false_positive] Possible null dereference")
+                .contains("Review memory signals from this project's prior human code-review feedback.")
+                .contains("False-positive suppression patterns")
+                .contains("[false_positive_pattern] status=false_positive")
+                .contains("projectId=" + project.id())
+                .contains("reviewId=" + firstReviewId)
+                .contains("issueId=" + issueId)
                 .contains("Repository contract already guarantees a non-null user in this fixture.")
-                .contains("Do not repeat false_positive/rejected feedback patterns");
+                .contains("Do not repeat false_positive_pattern entries");
 
         String secondDetailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", secondReviewId))
                 .andExpect(status().isOk())
@@ -613,7 +696,7 @@ class Mvp2AiCodeReviewTests {
                 .filteredOn(event -> "REVIEW_FEEDBACK_MEMORY_LOADED".equals(event.path("eventType").asText()))
                 .first()
                 .satisfies(event -> assertThat(event.path("outputSummary").asText())
-                        .contains("0 trusted patterns, 1 noise patterns"));
+                        .contains("0 confirmed patterns, 1 false-positive patterns"));
         assertThat(events)
                 .filteredOn(event -> "REVIEW_ISSUES_FILTERED".equals(event.path("eventType").asText()))
                 .first()

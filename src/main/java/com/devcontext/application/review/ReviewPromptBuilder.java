@@ -60,8 +60,8 @@ public class ReviewPromptBuilder {
                 - First decide whether the diff is a safe defensive change. If it mainly adds an existing guard, null handling, transaction boundary, idempotency check, or path normalization and no concrete remaining risk is visible, return an empty issues array.
                 - Do not invent problems without evidence.
                 - Evidence gate: every issue must be backed by at least one changed diff line, project context/rule, coding preference, or visible API/framework contract in the supplied context.
-                - Use REVIEW_FEEDBACK_MEMORY to calibrate precision. accepted/fixed patterns are useful precedent only when the current diff has matching evidence.
-                - Do not repeat false_positive/rejected feedback patterns unless the current diff provides stronger direct evidence than the historical rejected finding.
+                - Use REVIEW_FEEDBACK_MEMORY signals to calibrate precision. confirmed_issue_pattern entries are useful precedent only when the current diff has matching evidence.
+                - Do not repeat false_positive_pattern entries unless the current diff provides stronger direct evidence than the historical rejected finding.
                 - Human feedback does not override the evidence gate; it only helps decide what to prioritize or suppress.
                 - Use confidence low only for evidence-backed issues whose severity is uncertain; pure speculation belongs in recommendations, not issues.
                 - Do not report ORM lazy-loading, transaction-proxy, distributed-lock, cache-staleness, or concurrency assumptions unless the diff or project context explicitly shows that technology, constraint, or shared mutable state.

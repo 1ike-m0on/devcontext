@@ -24,6 +24,8 @@ import com.devcontext.domain.review.ReviewDetail;
 import com.devcontext.domain.review.ReviewEventDetail;
 import com.devcontext.domain.review.ReviewIssue;
 import com.devcontext.domain.review.ReviewIssueDraft;
+import com.devcontext.domain.review.ReviewMemorySignal;
+import com.devcontext.domain.review.ReviewMemorySignalType;
 import com.devcontext.domain.review.ReviewRecord;
 import com.devcontext.domain.run.AgentRun;
 import com.devcontext.ports.git.GitDiffProvider;
@@ -56,6 +58,7 @@ public class ReviewApplicationService {
     private final DecisionSearchService decisionSearchService;
     private final ReviewContextAssembler contextAssembler;
     private final ReviewPromptBuilder promptBuilder;
+    private final ReviewMemorySignalService reviewMemorySignalService;
     private final ReviewReportParser reportParser;
     private final ReviewReportPostProcessor reportPostProcessor;
     private final LlmClient llmClient;
@@ -72,6 +75,7 @@ public class ReviewApplicationService {
             DecisionSearchService decisionSearchService,
             ReviewContextAssembler contextAssembler,
             ReviewPromptBuilder promptBuilder,
+            ReviewMemorySignalService reviewMemorySignalService,
             ReviewReportParser reportParser,
             ReviewReportPostProcessor reportPostProcessor,
             LlmClient llmClient,
@@ -87,6 +91,7 @@ public class ReviewApplicationService {
         this.decisionSearchService = decisionSearchService;
         this.contextAssembler = contextAssembler;
         this.promptBuilder = promptBuilder;
+        this.reviewMemorySignalService = reviewMemorySignalService;
         this.reportParser = reportParser;
         this.reportPostProcessor = reportPostProcessor;
         this.llmClient = llmClient;
@@ -116,20 +121,21 @@ public class ReviewApplicationService {
             List<DecisionSearchResult> decisionMatches = recallReviewDecisions(project, diff);
             runService.recordEvent(run.id(), "DECISION_MEMORY_RECALLED", reviewDecisionQuerySummary(diff), decisionMatches.size() + " decision cards recalled", "success", null, null);
             decisionMemoryContext(project, decisionMatches).ifPresent(contextItems::add);
-            List<ReviewIssue> reviewFeedback = reviewIssueRepository.findRecentFeedbackByProjectId(project.id(), 8);
-            Optional<ContextItem> reviewFeedbackItem = reviewFeedbackContext(project, reviewFeedback);
+            List<ReviewMemorySignal> reviewMemorySignals = reviewMemorySignalService.findProjectSignals(project.id(), 8);
+            Optional<ContextItem> reviewFeedbackItem = reviewFeedbackContext(project, reviewMemorySignals);
             if (reviewFeedbackItem.isPresent()) {
                 contextItems.add(reviewFeedbackItem.get());
                 runService.recordEvent(
                         run.id(),
                         "REVIEW_FEEDBACK_MEMORY_LOADED",
                         "project " + project.id(),
-                        reviewFeedbackSummary(reviewFeedback),
+                        reviewFeedbackSummary(reviewMemorySignals),
                         "success",
                         null,
                         null
                 );
             }
+            List<ReviewIssue> reviewFeedback = reviewIssueRepository.findRecentFeedbackByProjectId(project.id(), 8);
             contextItems = contextItems.stream()
                     .sorted(Comparator.comparingInt(ContextItem::priority).reversed())
                     .toList();
@@ -293,17 +299,17 @@ public class ReviewApplicationService {
         return builder.toString();
     }
 
-    private Optional<ContextItem> reviewFeedbackContext(Project project, List<ReviewIssue> feedback) {
-        if (feedback.isEmpty()) {
+    private Optional<ContextItem> reviewFeedbackContext(Project project, List<ReviewMemorySignal> signals) {
+        if (signals.isEmpty()) {
             return Optional.empty();
         }
-        String content = renderReviewFeedbackContext(feedback);
+        String content = renderReviewFeedbackContext(signals);
         return Optional.of(new ContextItem(
                 null,
                 null,
                 project.id(),
                 "REVIEW_FEEDBACK_MEMORY",
-                "Recent Human Review Feedback",
+                "Review Memory Signals",
                 content,
                 "review-feedback:project-history",
                 870,
@@ -313,54 +319,64 @@ public class ReviewApplicationService {
         ));
     }
 
-    private String renderReviewFeedbackContext(List<ReviewIssue> feedback) {
+    private String renderReviewFeedbackContext(List<ReviewMemorySignal> signals) {
         StringBuilder builder = new StringBuilder();
-        builder.append("Recent human feedback for this project's code reviews.")
+        builder.append("Review memory signals from this project's prior human code-review feedback.")
                 .append(System.lineSeparator());
-        builder.append("Use this as quality calibration, not as automatic truth.")
+        builder.append("Use these project-local signals as quality calibration, not as automatic truth or global preference.")
                 .append(System.lineSeparator());
-        builder.append("- accepted/fixed: trusted patterns when the current diff has matching evidence.")
+        builder.append("- confirmed_issue_pattern: accepted/fixed findings to prioritize when the current diff has matching evidence.")
                 .append(System.lineSeparator());
-        builder.append("- false_positive/rejected: noise patterns to avoid unless the current diff has stronger direct evidence.")
+        builder.append("- false_positive_pattern: historical false_positive/rejected findings to suppress unless the current diff has stronger direct evidence.")
                 .append(System.lineSeparator())
                 .append(System.lineSeparator());
 
-        List<ReviewIssue> trusted = feedback.stream()
-                .filter(issue -> isTrustedReviewFeedback(issue.status()))
+        List<ReviewMemorySignal> confirmed = signals.stream()
+                .filter(signal -> signal.signalType() == ReviewMemorySignalType.CONFIRMED_ISSUE_PATTERN)
                 .toList();
-        List<ReviewIssue> noise = feedback.stream()
-                .filter(issue -> isNoiseReviewFeedback(issue.status()))
+        List<ReviewMemorySignal> falsePositive = signals.stream()
+                .filter(signal -> signal.signalType() == ReviewMemorySignalType.FALSE_POSITIVE_PATTERN)
                 .toList();
-        appendFeedbackSection(builder, "Trusted patterns", trusted);
-        appendFeedbackSection(builder, "Noise patterns", noise);
+        appendFeedbackSection(builder, "Confirmed issue patterns", confirmed);
+        appendFeedbackSection(builder, "False-positive suppression patterns", falsePositive);
         return builder.toString();
     }
 
-    private void appendFeedbackSection(StringBuilder builder, String title, List<ReviewIssue> issues) {
-        if (issues.isEmpty()) {
+    private void appendFeedbackSection(StringBuilder builder, String title, List<ReviewMemorySignal> signals) {
+        if (signals.isEmpty()) {
             return;
         }
         builder.append(title).append(":").append(System.lineSeparator());
-        for (ReviewIssue issue : issues) {
-            builder.append("- [").append(valueOr(issue.status(), "unknown")).append("] ")
-                    .append(trimForPrompt(valueOr(issue.title(), "Untitled issue"), 140));
-            if (issue.filePath() != null && !issue.filePath().isBlank()) {
-                builder.append(" | ").append(issue.filePath());
-                if (issue.lineNumber() != null) {
-                    builder.append(":").append(issue.lineNumber());
+        for (ReviewMemorySignal signal : signals) {
+            builder.append("- [").append(signal.signalType().id()).append("] ")
+                    .append("status=").append(valueOr(signal.feedbackStatus(), "unknown"))
+                    .append(" projectId=").append(signal.projectId())
+                    .append(" reviewId=").append(signal.reviewId())
+                    .append(" issueId=").append(signal.issueId())
+                    .append(" title=").append(trimForPrompt(valueOr(signal.title(), "Untitled issue"), 140));
+            if (signal.filePath() != null && !signal.filePath().isBlank()) {
+                builder.append(" | ").append(signal.filePath());
+                if (signal.lineNumber() != null) {
+                    builder.append(":").append(signal.lineNumber());
                 }
             }
             builder.append(System.lineSeparator());
-            appendLine(builder, "  Description", trimForPrompt(issue.description(), 260));
-            appendLine(builder, "  Human note", trimForPrompt(issue.note(), 220));
+            appendLine(builder, "  Description", trimForPrompt(signal.description(), 260));
+            appendLine(builder, "  Impact", trimForPrompt(signal.impact(), 220));
+            appendLine(builder, "  Suggestion", trimForPrompt(signal.suggestion(), 220));
+            appendLine(builder, "  Human note", trimForPrompt(signal.note(), 220));
         }
         builder.append(System.lineSeparator());
     }
 
-    private String reviewFeedbackSummary(List<ReviewIssue> feedback) {
-        long trusted = feedback.stream().filter(issue -> isTrustedReviewFeedback(issue.status())).count();
-        long noise = feedback.stream().filter(issue -> isNoiseReviewFeedback(issue.status())).count();
-        return trusted + " trusted patterns, " + noise + " noise patterns";
+    private String reviewFeedbackSummary(List<ReviewMemorySignal> signals) {
+        long confirmed = signals.stream()
+                .filter(signal -> signal.signalType() == ReviewMemorySignalType.CONFIRMED_ISSUE_PATTERN)
+                .count();
+        long falsePositive = signals.stream()
+                .filter(signal -> signal.signalType() == ReviewMemorySignalType.FALSE_POSITIVE_PATTERN)
+                .count();
+        return confirmed + " confirmed patterns, " + falsePositive + " false-positive patterns";
     }
 
     private String reviewIssueFilterSummary(
@@ -373,14 +389,6 @@ public class ReviewApplicationService {
             return summary + ", " + processedReport.feedbackDowngradedIssueCount() + " by prior feedback";
         }
         return summary;
-    }
-
-    private boolean isTrustedReviewFeedback(String status) {
-        return "accepted".equals(status) || "fixed".equals(status);
-    }
-
-    private boolean isNoiseReviewFeedback(String status) {
-        return "false_positive".equals(status) || "rejected".equals(status);
     }
 
     private void appendLine(StringBuilder builder, String label, String value) {
