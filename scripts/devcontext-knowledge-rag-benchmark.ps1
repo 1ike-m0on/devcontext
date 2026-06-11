@@ -212,8 +212,8 @@ Core flow:
 4. Consume payment callback messages asynchronously through RocketMQ.
 5. Keep hot merchant, voucher, and product reads fast with Cache Aside.
 
-There is no real benchmark report in this fixture. Runtime numbers such as QPS
-and P95 must not be invented from source-code structure alone.
+Runtime numbers and latency percentiles must not be invented from source-code
+structure or overview notes alone.
 "@
 
     Write-TextFile -PathValue (Join-Path $resolvedRoot "docs/design/cache-aside.md") -Content @"
@@ -244,6 +244,28 @@ requiring every read request to hit MySQL.
 
 This document is intentionally speculative. It lists possible future benchmark
 ideas but does not contain current QPS, P95, or production evidence.
+"@
+
+    Write-TextFile -PathValue (Join-Path $resolvedRoot "docs/benchmarks/load-test.md") -Content @"
+# Flash sale load test
+
+This is the accepted benchmark report for the flash sale checkout path.
+
+Result summary:
+- p95 latency: 135ms
+- p99 latency: 240ms
+- error rate: 0.02%
+
+Use this report, not roadmap notes, when answering current latency questions.
+"@
+
+    Write-TextFile -PathValue (Join-Path $resolvedRoot ".ai/manual/operator-runbook.md") -Content @"
+# Operator runbook
+
+The service is operated through Docker Compose for local demos. Operators should
+check MySQL, Redis, RocketMQ, Prometheus, and Grafana health before traffic.
+This manual runbook is a fallback overview and does not replace code, SQL,
+configuration, or measured evidence for detailed questions.
 "@
 
     Write-TextFile -PathValue (Join-Path $resolvedRoot "src/main/java/com/acme/lifeservice/common/cache/TwoLevelCacheClient.java") -Content @"
@@ -545,6 +567,26 @@ function Get-ResultEvidenceTypes {
     return Get-StringArray (Get-PropertyValue $Result "evidenceTypes" @())
 }
 
+function Get-ResultScoreReasons {
+    param([object]$Result)
+    return Get-StringArray (Get-PropertyValue $Result "scoreReasons" @())
+}
+
+function Test-ArrayContainsAll {
+    param(
+        [string[]]$Actual,
+        [string[]]$Expected
+    )
+    $Actual = @(Get-StringArray $Actual)
+    $Expected = @(Get-StringArray $Expected)
+    foreach ($expectedValue in $Expected) {
+        if (-not ($Actual -contains $expectedValue)) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Get-ResultsAtK {
     param(
         [object[]]$Results,
@@ -589,6 +631,35 @@ function Test-AllEvidenceAtK {
     return $true
 }
 
+function Test-AllScoreReasonsAtK {
+    param(
+        [object[]]$Results,
+        [string[]]$Expected,
+        [int]$Limit
+    )
+    $Expected = @(Get-StringArray $Expected)
+    if ($Expected.Count -eq 0) {
+        return $true
+    }
+    $reasons = @()
+    foreach ($result in (Get-ResultsAtK -Results $Results -Limit $Limit)) {
+        $reasons += Get-ResultScoreReasons $result
+    }
+    foreach ($expectedReason in $Expected) {
+        $matched = $false
+        foreach ($reason in $reasons) {
+            if ($reason -eq $expectedReason -or $reason -like $expectedReason) {
+                $matched = $true
+                break
+            }
+        }
+        if (-not $matched) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Test-PlanEvidence {
     param(
         [object]$Plan,
@@ -606,6 +677,46 @@ function Test-PlanEvidence {
             return $false
         }
     }
+    return $true
+}
+
+function Test-EvidenceEvaluation {
+    param(
+        [object]$Evaluation,
+        [string]$ExpectedStatus,
+        [object]$ExpectedNoAnswerRequired,
+        [string[]]$ExpectedMatchedRequired,
+        [string[]]$ExpectedMissingRequired
+    )
+    if ($null -eq $Evaluation) {
+        return [string]::IsNullOrWhiteSpace($ExpectedStatus) `
+            -and $null -eq $ExpectedNoAnswerRequired `
+            -and @(Get-StringArray $ExpectedMatchedRequired).Count -eq 0 `
+            -and @(Get-StringArray $ExpectedMissingRequired).Count -eq 0
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedStatus)) {
+        if ([string](Get-PropertyValue $Evaluation "status" "") -ne $ExpectedStatus) {
+            return $false
+        }
+    }
+
+    if ($null -ne $ExpectedNoAnswerRequired) {
+        if ([bool](Get-PropertyValue $Evaluation "noAnswerRequired" $false) -ne [bool]$ExpectedNoAnswerRequired) {
+            return $false
+        }
+    }
+
+    $matchedRequired = Get-StringArray (Get-PropertyValue $Evaluation "matchedRequiredEvidenceTypes" @())
+    if (-not (Test-ArrayContainsAll -Actual $matchedRequired -Expected $ExpectedMatchedRequired)) {
+        return $false
+    }
+
+    $missingRequired = Get-StringArray (Get-PropertyValue $Evaluation "missingRequiredEvidenceTypes" @())
+    if (-not (Test-ArrayContainsAll -Actual $missingRequired -Expected $ExpectedMissingRequired)) {
+        return $false
+    }
+
     return $true
 }
 
@@ -736,6 +847,7 @@ function Evaluate-KnowledgeCase {
     $expectedPlanEvidenceTypes = @(Get-StringArray (Get-PropertyValue $Case "expectedPlanEvidenceTypes" @()))
     $expectedEvidenceTypes = @(Get-StringArray (Get-PropertyValue $Case "expectedEvidenceTypes" @()))
     $requiredEvidenceTypesAtK = @(Get-StringArray (Get-PropertyValue $Case "requiredEvidenceTypesAtK" @()))
+    $expectedScoreReasonsAtK = @(Get-StringArray (Get-PropertyValue $Case "expectedScoreReasonsAtK" @()))
     $expectedSourcePaths = @(Get-StringArray (Get-PropertyValue $Case "expectedSourcePaths" @()))
     $forbiddenSourcePaths = @(Get-StringArray (Get-PropertyValue $Case "forbiddenSourcePaths" @()))
     $answerMustContainAny = @(Get-StringArray (Get-PropertyValue $Case "answerMustContainAny" @()))
@@ -743,11 +855,19 @@ function Evaluate-KnowledgeCase {
     $answerMustNotContain = @(Get-StringArray (Get-PropertyValue $Case "answerMustNotContain" @()))
     $maxGenericDocsAtK = [int](Get-PropertyValue $Case "maxGenericDocsAtK" 999)
     $noAnswerExpected = [bool](Get-PropertyValue $Case "noAnswerExpected" $false)
+    $expectedEvidenceEvaluationStatus = [string](Get-PropertyValue $Case "expectedEvidenceEvaluationStatus" "")
+    $expectedEvaluationMatchedRequired = @(Get-StringArray (Get-PropertyValue $Case "expectedEvaluationMatchedRequired" @()))
+    $expectedEvaluationMissingRequired = @(Get-StringArray (Get-PropertyValue $Case "expectedEvaluationMissingRequired" @()))
+    $expectedNoAnswerRequired = $null
+    if (Has-Property $Case "expectedNoAnswerRequired") {
+        $expectedNoAnswerRequired = [bool]$Case.expectedNoAnswerRequired
+    }
 
     $planEvidenceHit = Test-PlanEvidence -Plan $searchData.queryPlan -Expected $expectedPlanEvidenceTypes
     $evidenceTop1Hit = Test-AnyEvidenceAtK -Results $results -Expected $expectedEvidenceTypes -Limit 1
     $evidenceTop3Hit = Test-AnyEvidenceAtK -Results $results -Expected $expectedEvidenceTypes -Limit 3
     $requiredEvidenceAtKPass = Test-AllEvidenceAtK -Results $results -Expected $requiredEvidenceTypesAtK -Limit $caseTopK
+    $scoreReasonAtKPass = Test-AllScoreReasonsAtK -Results $results -Expected $expectedScoreReasonsAtK -Limit $caseTopK
 
     $sourceHitAtK = $false
     foreach ($result in $topResults) {
@@ -781,6 +901,15 @@ function Evaluate-KnowledgeCase {
     $answerKeywordHit = $false
     $answerForbiddenPass = $false
     $noAnswerPass = $false
+    $evidenceEvaluationPass = $false
+    $evidenceEvaluationStatus = ""
+    $evidenceEvaluationSufficient = $false
+    $evidenceEvaluationNoAnswerRequired = $false
+    $evidenceEvaluationMatchedRequired = @()
+    $evidenceEvaluationMissingRequired = @()
+    $evidenceEvaluationMatchedPreferred = @()
+    $evidenceEvaluationMissingPreferred = @()
+    $evidenceEvaluationReasons = @()
     $answer = ""
     $citations = @()
     $askError = ""
@@ -792,6 +921,17 @@ function Evaluate-KnowledgeCase {
             $askSuccess = $true
             $answer = [string]$askData.answer
             $citations = @($askData.citations)
+            $evidenceEvaluation = Get-PropertyValue $askData "evidenceEvaluation" $null
+            if ($null -ne $evidenceEvaluation) {
+                $evidenceEvaluationStatus = [string](Get-PropertyValue $evidenceEvaluation "status" "")
+                $evidenceEvaluationSufficient = [bool](Get-PropertyValue $evidenceEvaluation "sufficient" $false)
+                $evidenceEvaluationNoAnswerRequired = [bool](Get-PropertyValue $evidenceEvaluation "noAnswerRequired" $false)
+                $evidenceEvaluationMatchedRequired = Get-StringArray (Get-PropertyValue $evidenceEvaluation "matchedRequiredEvidenceTypes" @())
+                $evidenceEvaluationMissingRequired = Get-StringArray (Get-PropertyValue $evidenceEvaluation "missingRequiredEvidenceTypes" @())
+                $evidenceEvaluationMatchedPreferred = Get-StringArray (Get-PropertyValue $evidenceEvaluation "matchedPreferredEvidenceTypes" @())
+                $evidenceEvaluationMissingPreferred = Get-StringArray (Get-PropertyValue $evidenceEvaluation "missingPreferredEvidenceTypes" @())
+                $evidenceEvaluationReasons = Get-StringArray (Get-PropertyValue $evidenceEvaluation "reasons" @())
+            }
             foreach ($citation in $citations) {
                 if (Test-PathMatches -PathValue ([string]$citation.filePath) -Patterns $expectedSourcePaths) {
                     $citationSourceHit = $true
@@ -805,8 +945,14 @@ function Evaluate-KnowledgeCase {
             }
             $answerKeywordHit = (Test-TextContainsAll -Text $answer -Terms $answerMustContainAll) -and (Test-TextContainsAny -Text $answer -Terms $answerMustContainAny)
             $answerForbiddenPass = Test-TextContainsNone -Text $answer -Terms $answerMustNotContain
+            $evidenceEvaluationPass = Test-EvidenceEvaluation `
+                -Evaluation $evidenceEvaluation `
+                -ExpectedStatus $expectedEvidenceEvaluationStatus `
+                -ExpectedNoAnswerRequired $expectedNoAnswerRequired `
+                -ExpectedMatchedRequired $expectedEvaluationMatchedRequired `
+                -ExpectedMissingRequired $expectedEvaluationMissingRequired
             if ($noAnswerExpected) {
-                $noAnswerPass = $answerKeywordHit -and $answerForbiddenPass
+                $noAnswerPass = $answerKeywordHit -and $answerForbiddenPass -and $evidenceEvaluationNoAnswerRequired
             } else {
                 $noAnswerPass = $true
             }
@@ -820,6 +966,7 @@ function Evaluate-KnowledgeCase {
         $topFiles += [pscustomobject]@{
             filePath = [string]$result.filePath
             evidenceTypes = Get-ResultEvidenceTypes $result
+            scoreReasons = Get-ResultScoreReasons $result
             fusedScore = [double]$result.fusedScore
             keywordScore = [double]$result.keywordScore
             vectorScore = [double]$result.vectorScore
@@ -838,6 +985,8 @@ function Evaluate-KnowledgeCase {
         evidenceTop1Hit = $evidenceTop1Hit
         evidenceTop3Hit = $evidenceTop3Hit
         requiredEvidenceAtKPass = $requiredEvidenceAtKPass
+        scoreReasonAtKPass = $scoreReasonAtKPass
+        expectedScoreReasonsAtK = $expectedScoreReasonsAtK
         sourceHitAtK = $sourceHitAtK
         forbiddenSourcePass = $forbiddenSourcePass
         forbiddenSourceHits = $forbiddenHits
@@ -852,6 +1001,15 @@ function Evaluate-KnowledgeCase {
         answerKeywordHit = $answerKeywordHit
         answerForbiddenPass = $answerForbiddenPass
         noAnswerPass = $noAnswerPass
+        evidenceEvaluationPass = $evidenceEvaluationPass
+        evidenceEvaluationStatus = $evidenceEvaluationStatus
+        evidenceEvaluationSufficient = $evidenceEvaluationSufficient
+        evidenceEvaluationNoAnswerRequired = $evidenceEvaluationNoAnswerRequired
+        evidenceEvaluationMatchedRequired = $evidenceEvaluationMatchedRequired
+        evidenceEvaluationMissingRequired = $evidenceEvaluationMissingRequired
+        evidenceEvaluationMatchedPreferred = $evidenceEvaluationMatchedPreferred
+        evidenceEvaluationMissingPreferred = $evidenceEvaluationMissingPreferred
+        evidenceEvaluationReasons = $evidenceEvaluationReasons
         answer = $answer
         citations = $citations
         topFiles = $topFiles
@@ -887,6 +1045,7 @@ function Write-Reports {
         evidenceTop1HitRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.evidenceTop1Hit })
         evidenceTop3HitRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.evidenceTop3Hit })
         requiredEvidenceAtKPassRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.requiredEvidenceAtKPass })
+        scoreReasonAtKPassRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.scoreReasonAtKPass })
         sourceHitAtKRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.sourceHitAtK })
         forbiddenSourcePassRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.forbiddenSourcePass })
         genericDocPassRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.genericDocPass })
@@ -896,6 +1055,7 @@ function Write-Reports {
         citationEvidenceHitRate = if ($SkipAsk) { $null } else { Get-Rate @($askCases | ForEach-Object { [bool]$_.citationEvidenceHit }) }
         answerKeywordHitRate = if ($SkipAsk) { $null } else { Get-Rate @($askCases | ForEach-Object { [bool]$_.answerKeywordHit }) }
         answerForbiddenPassRate = if ($SkipAsk) { $null } else { Get-Rate @($askCases | ForEach-Object { [bool]$_.answerForbiddenPass }) }
+        evidenceEvaluationPassRate = if ($SkipAsk) { $null } else { Get-Rate @($askCases | ForEach-Object { [bool]$_.evidenceEvaluationPass }) }
         noAnswerAccuracy = if ($SkipAsk) { $null } else { Get-Rate @($noAnswerCases | ForEach-Object { [bool]$_.noAnswerPass }) }
     }
 
@@ -926,20 +1086,21 @@ function Write-Reports {
     $lines += ""
     $lines += "## Summary"
     $lines += ""
-    $lines += "| Cases | PlanHit | EvidenceTop1 | EvidenceTop3 | Required@K | Source@K | ForbiddenPass | GenericPass | AvgGenericPollution | AskSuccess | CitationSource | CitationEvidence | AnswerKeyword | AnswerForbidden | NoAnswerAccuracy |"
-    $lines += "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-    $lines += "| $($summary.caseCount) | $($summary.searchPlanHitRate) | $($summary.evidenceTop1HitRate) | $($summary.evidenceTop3HitRate) | $($summary.requiredEvidenceAtKPassRate) | $($summary.sourceHitAtKRate) | $($summary.forbiddenSourcePassRate) | $($summary.genericDocPassRate) | $($summary.averageGenericDocPollutionAtK) | $($summary.askSuccessRate) | $($summary.citationSourceHitRate) | $($summary.citationEvidenceHitRate) | $($summary.answerKeywordHitRate) | $($summary.answerForbiddenPassRate) | $($summary.noAnswerAccuracy) |"
+    $lines += "| Cases | PlanHit | EvidenceTop1 | EvidenceTop3 | Required@K | ScoreReason@K | Source@K | ForbiddenPass | GenericPass | AvgGenericPollution | AskSuccess | CitationSource | CitationEvidence | EvidenceEvaluation | AnswerKeyword | AnswerForbidden | NoAnswerAccuracy |"
+    $lines += "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+    $lines += "| $($summary.caseCount) | $($summary.searchPlanHitRate) | $($summary.evidenceTop1HitRate) | $($summary.evidenceTop3HitRate) | $($summary.requiredEvidenceAtKPassRate) | $($summary.scoreReasonAtKPassRate) | $($summary.sourceHitAtKRate) | $($summary.forbiddenSourcePassRate) | $($summary.genericDocPassRate) | $($summary.averageGenericDocPollutionAtK) | $($summary.askSuccessRate) | $($summary.citationSourceHitRate) | $($summary.citationEvidenceHitRate) | $($summary.evidenceEvaluationPassRate) | $($summary.answerKeywordHitRate) | $($summary.answerForbiddenPassRate) | $($summary.noAnswerAccuracy) |"
     $lines += ""
     $lines += "## Cases"
     $lines += ""
-    $lines += "| Case | Plan | EvidenceTop1 | EvidenceTop3 | Required@K | Source@K | Forbidden | Generic | Ask | Citation | Answer | Top files |"
-    $lines += "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    $lines += "| Case | Plan | EvidenceTop1 | EvidenceTop3 | Required@K | ScoreReason@K | Source@K | Forbidden | Generic | Ask | Evaluation | Citation | Answer | Top files |"
+    $lines += "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
     foreach ($case in $CaseResults) {
-        $topFiles = @($case.topFiles | Select-Object -First 3 | ForEach-Object { "$($_.filePath) [$($_.evidenceTypes -join '+')]" })
+        $topFiles = @($case.topFiles | Select-Object -First 3 | ForEach-Object { "$($_.filePath) [$($_.evidenceTypes -join '+')] {$($_.scoreReasons -join '+')}" })
         $askDisplay = if ($SkipAsk) { "" } else { [string]$case.askSuccess }
+        $evaluationPass = if ($SkipAsk) { "" } else { [string]$case.evidenceEvaluationPass }
         $citationPass = if ($SkipAsk) { "" } else { "$($case.citationSourceHit)/$($case.citationEvidenceHit)" }
         $answerPass = if ($SkipAsk) { "" } else { "$($case.answerKeywordHit)/$($case.answerForbiddenPass)" }
-        $lines += "| $(ConvertTo-MdCell $case.name) | $($case.planEvidenceHit) | $($case.evidenceTop1Hit) | $($case.evidenceTop3Hit) | $($case.requiredEvidenceAtKPass) | $($case.sourceHitAtK) | $($case.forbiddenSourcePass) | $($case.genericDocPass) | $(ConvertTo-MdCell $askDisplay) | $(ConvertTo-MdCell $citationPass) | $(ConvertTo-MdCell $answerPass) | $(Join-Md $topFiles) |"
+        $lines += "| $(ConvertTo-MdCell $case.name) | $($case.planEvidenceHit) | $($case.evidenceTop1Hit) | $($case.evidenceTop3Hit) | $($case.requiredEvidenceAtKPass) | $($case.scoreReasonAtKPass) | $($case.sourceHitAtK) | $($case.forbiddenSourcePass) | $($case.genericDocPass) | $(ConvertTo-MdCell $askDisplay) | $(ConvertTo-MdCell $evaluationPass) | $(ConvertTo-MdCell $citationPass) | $(ConvertTo-MdCell $answerPass) | $(Join-Md $topFiles) |"
     }
     $lines += ""
     $lines += "## Case Details"
@@ -953,15 +1114,22 @@ function Write-Reports {
         $lines += "- Plan preferred evidence: ``$($case.planPreferredEvidenceTypes -join ', ')``"
         $lines += "- Normalized terms: ``$($case.normalizedTerms -join ', ')``"
         $lines += "- Generic doc pollution: ``$($case.genericDocPollutionAtK)``"
+        $lines += "- Expected score reasons at K: ``$($case.expectedScoreReasonsAtK -join ', ')``"
+        if (-not $SkipAsk -and $case.askSuccess) {
+            $lines += "- Evidence evaluation: status=``$($case.evidenceEvaluationStatus)`` sufficient=``$($case.evidenceEvaluationSufficient)`` noAnswerRequired=``$($case.evidenceEvaluationNoAnswerRequired)``"
+            $lines += "- Evidence evaluation matched required: ``$($case.evidenceEvaluationMatchedRequired -join ', ')``"
+            $lines += "- Evidence evaluation missing required: ``$($case.evidenceEvaluationMissingRequired -join ', ')``"
+            $lines += "- Evidence evaluation reasons: ``$($case.evidenceEvaluationReasons -join ' | ')``"
+        }
         if (-not $SkipAsk -and -not $case.askSuccess) {
             $lines += "- Ask error: ``$(ConvertTo-MdCell $case.askError)``"
         }
         $lines += ""
-        $lines += "| Rank | File | Evidence | Fused | Keyword | Vector |"
-        $lines += "| ---: | --- | --- | ---: | ---: | ---: |"
+        $lines += "| Rank | File | Evidence | Score reasons | Fused | Keyword | Vector |"
+        $lines += "| ---: | --- | --- | --- | ---: | ---: | ---: |"
         $rank = 1
         foreach ($file in $case.topFiles) {
-            $lines += "| $rank | $(ConvertTo-MdCell $file.filePath) | $(Join-Md $file.evidenceTypes) | $($file.fusedScore) | $($file.keywordScore) | $($file.vectorScore) |"
+            $lines += "| $rank | $(ConvertTo-MdCell $file.filePath) | $(Join-Md $file.evidenceTypes) | $(Join-Md $file.scoreReasons) | $($file.fusedScore) | $($file.keywordScore) | $($file.vectorScore) |"
             $rank += 1
         }
     }
@@ -970,8 +1138,10 @@ function Write-Reports {
     $lines += ""
     $lines += "- PlanHit: query planner selected the expected evidence types."
     $lines += "- EvidenceTop1/Top3: retrieved chunks include expected concrete evidence types."
+    $lines += "- ScoreReason@K: TopK retrieved chunks include expected ranking reasons such as required evidence or primary reliability."
     $lines += "- Source@K: retrieved file paths include expected source paths."
     $lines += "- GenericPass: generated/manual summary docs did not dominate the TopK."
+    $lines += "- EvidenceEvaluation checks `/api/knowledge/ask` evidence grounding status and required-evidence matches."
     $lines += "- AnswerKeyword and AnswerForbidden are guardrail checks, not human grading."
     $lines += "- NoAnswerAccuracy checks that performance questions do not invent QPS/P95 without benchmark evidence."
 
@@ -1058,6 +1228,8 @@ foreach ($case in $cases) {
             evidenceTop1Hit = $false
             evidenceTop3Hit = $false
             requiredEvidenceAtKPass = $false
+            scoreReasonAtKPass = $false
+            expectedScoreReasonsAtK = @(Get-StringArray (Get-PropertyValue $case "expectedScoreReasonsAtK" @()))
             sourceHitAtK = $false
             forbiddenSourcePass = $false
             forbiddenSourceHits = @()
@@ -1072,6 +1244,15 @@ foreach ($case in $cases) {
             answerKeywordHit = $false
             answerForbiddenPass = $false
             noAnswerPass = $false
+            evidenceEvaluationPass = $false
+            evidenceEvaluationStatus = ""
+            evidenceEvaluationSufficient = $false
+            evidenceEvaluationNoAnswerRequired = $false
+            evidenceEvaluationMatchedRequired = @()
+            evidenceEvaluationMissingRequired = @()
+            evidenceEvaluationMatchedPreferred = @()
+            evidenceEvaluationMissingPreferred = @()
+            evidenceEvaluationReasons = @()
             answer = ""
             citations = @()
             topFiles = @()
@@ -1087,6 +1268,8 @@ Write-Host "Knowledge RAG acceptance benchmark complete"
 Write-Host "PlanHit:                 $($report.summary.searchPlanHitRate)"
 Write-Host "EvidenceTop1:            $($report.summary.evidenceTop1HitRate)"
 Write-Host "EvidenceTop3:            $($report.summary.evidenceTop3HitRate)"
+Write-Host "RequiredEvidence@K:      $($report.summary.requiredEvidenceAtKPassRate)"
+Write-Host "ScoreReason@K:           $($report.summary.scoreReasonAtKPassRate)"
 Write-Host "SourceHit@K:             $($report.summary.sourceHitAtKRate)"
 Write-Host "ForbiddenSourcePass:     $($report.summary.forbiddenSourcePassRate)"
 Write-Host "GenericDocPass:          $($report.summary.genericDocPassRate)"
@@ -1094,6 +1277,7 @@ if ($SkipAsk) {
     Write-Host "AnswerKeywordHit:        skipped"
     Write-Host "NoAnswerAccuracy:        skipped"
 } else {
+    Write-Host "EvidenceEvaluationPass:  $($report.summary.evidenceEvaluationPassRate)"
     Write-Host "AnswerKeywordHit:        $($report.summary.answerKeywordHitRate)"
     Write-Host "NoAnswerAccuracy:        $($report.summary.noAnswerAccuracy)"
 }
