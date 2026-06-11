@@ -26,6 +26,7 @@ try {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
+$DefaultCasesPath = "docs/benchmarks/knowledge-rag/knowledge-rag-acceptance-cases.json"
 
 if ($Help) {
     @"
@@ -47,7 +48,8 @@ Common options:
 
 By default, the script creates a temporary life-service fixture, indexes it as a
 project_ai_docs source, evaluates curated knowledge-search and RAG-answer cases,
-and writes Markdown/JSON reports under docs/reports.
+and writes Markdown/JSON reports under docs/reports. Clean checkouts fall back
+to built-in cases when the private docs cases file is absent.
 "@ | Write-Host
     exit 0
 }
@@ -190,6 +192,148 @@ function Write-TextFile {
         New-Item -ItemType Directory -Path $parent | Out-Null
     }
     $Content.TrimStart() | Set-Content -Encoding UTF8 -LiteralPath $PathValue
+}
+
+function Get-DefaultKnowledgeRagAcceptanceCases {
+    $json = @'
+[
+  {
+    "name": "benchmark p95 uses required primary evidence",
+    "query": "What is the benchmark p95 latency for flash sale checkout?",
+    "topK": 1,
+    "expectedPlanEvidenceTypes": ["BENCHMARK"],
+    "expectedEvidenceTypes": ["BENCHMARK"],
+    "requiredEvidenceTypesAtK": ["BENCHMARK"],
+    "expectedScoreReasonsAtK": [
+      "required_evidence:BENCHMARK",
+      "preferred_evidence:BENCHMARK*",
+      "source_reliability:primary",
+      "specific_engineering_evidence:benchmark_file"
+    ],
+    "expectedSourcePaths": ["docs/benchmarks/load-test.md"],
+    "forbiddenSourcePaths": ["docs/roadmap/v3-future-performance.md"],
+    "maxGenericDocsAtK": 0,
+    "expectedEvidenceEvaluationStatus": "sufficient",
+    "expectedNoAnswerRequired": false,
+    "expectedEvaluationMatchedRequired": ["BENCHMARK"],
+    "answerMustContainAll": ["p95", "135ms"],
+    "answerMustContainAny": ["[S1]", "docs/benchmarks/load-test.md"],
+    "answerMustNotContain": ["not available", "Insufficient evidence"],
+    "noAnswerExpected": false
+  },
+  {
+    "name": "missing throughput benchmark triggers no-answer guard",
+    "query": "What is the sustained throughput SLO for the order metrics dashboard?",
+    "topK": 1,
+    "expectedPlanEvidenceTypes": ["BENCHMARK", "OBSERVABILITY"],
+    "expectedEvidenceTypes": ["OBSERVABILITY"],
+    "expectedScoreReasonsAtK": [
+      "preferred_evidence:OBSERVABILITY*",
+      "source_reliability:primary"
+    ],
+    "expectedSourcePaths": [
+      "src/main/java/com/acme/lifeservice/order/metrics/OrderMetrics.java",
+      "monitoring/*"
+    ],
+    "forbiddenSourcePaths": ["docs/benchmarks/*"],
+    "maxGenericDocsAtK": 1,
+    "expectedEvidenceEvaluationStatus": "insufficient_evidence",
+    "expectedNoAnswerRequired": true,
+    "expectedEvaluationMissingRequired": ["BENCHMARK"],
+    "answerMustContainAll": ["Insufficient evidence", "BENCHMARK", "no-answer guard"],
+    "answerMustNotContain": ["135ms", "240ms"],
+    "noAnswerExpected": true
+  },
+  {
+    "name": "cache invalidation prefers primary cache evidence",
+    "query": "How does cache invalidation handle Redis delete failure?",
+    "topK": 3,
+    "expectedPlanEvidenceTypes": ["CACHE", "SERVICE_CODE"],
+    "expectedEvidenceTypes": ["CACHE"],
+    "expectedScoreReasonsAtK": [
+      "preferred_evidence:CACHE*",
+      "source_reliability:primary",
+      "specific_engineering_evidence:cache_file"
+    ],
+    "expectedSourcePaths": [
+      "docs/design/cache-aside.md",
+      "src/main/java/com/acme/lifeservice/common/cache/CacheInvalidationService.java"
+    ],
+    "forbiddenSourcePaths": [".ai/generated/core-flows.md"],
+    "maxGenericDocsAtK": 1,
+    "expectedEvidenceEvaluationStatus": "sufficient",
+    "expectedNoAnswerRequired": false,
+    "answerMustContainAll": ["Redis", "cache"],
+    "answerMustContainAny": ["retry", "ls_cache_delete_task", "CacheInvalidationService"],
+    "answerMustNotContain": ["benchmark"],
+    "noAnswerExpected": false
+  },
+  {
+    "name": "sql index question uses schema evidence",
+    "query": "Which SQL indexes support voucher order lookup?",
+    "topK": 3,
+    "expectedPlanEvidenceTypes": ["SQL_SCHEMA"],
+    "expectedEvidenceTypes": ["SQL_SCHEMA"],
+    "expectedScoreReasonsAtK": [
+      "preferred_evidence:SQL_SCHEMA*",
+      "source_reliability:primary",
+      "specific_engineering_evidence:sql_file"
+    ],
+    "expectedSourcePaths": ["src/main/resources/db/schema.sql"],
+    "forbiddenSourcePaths": [".ai/generated/core-flows.md", "docs/roadmap/*"],
+    "maxGenericDocsAtK": 0,
+    "expectedEvidenceEvaluationStatus": "sufficient",
+    "expectedNoAnswerRequired": false,
+    "answerMustContainAll": ["idx_voucher_order_user_id", "voucher_order"],
+    "answerMustContainAny": ["SQL", "schema", "index"],
+    "answerMustNotContain": ["Insufficient evidence"],
+    "noAnswerExpected": false
+  },
+  {
+    "name": "payment callback cites queue and service evidence",
+    "query": "How does payment callback RocketMQ idempotency work?",
+    "topK": 4,
+    "expectedPlanEvidenceTypes": ["QUEUE", "SERVICE_CODE"],
+    "expectedEvidenceTypes": ["QUEUE", "SERVICE_CODE"],
+    "expectedScoreReasonsAtK": [
+      "preferred_evidence:QUEUE*",
+      "source_reliability:primary"
+    ],
+    "expectedSourcePaths": [
+      "src/main/java/com/acme/lifeservice/payment/mq/PaymentCallbackConsumer.java",
+      "src/main/java/com/acme/lifeservice/payment/service/PaymentIdempotencyService.java"
+    ],
+    "forbiddenSourcePaths": [".ai/generated/core-flows.md"],
+    "maxGenericDocsAtK": 1,
+    "expectedEvidenceEvaluationStatus": "sufficient",
+    "expectedNoAnswerRequired": false,
+    "answerMustContainAll": ["RocketMQ", "idempotency"],
+    "answerMustContainAny": ["PaymentCallbackConsumer", "markProcessing", "markSuccess"],
+    "answerMustNotContain": ["Insufficient evidence"],
+    "noAnswerExpected": false
+  },
+  {
+    "name": "manual overview remains valid fallback",
+    "query": "Give a high level overview of operations for the local demo.",
+    "topK": 3,
+    "expectedPlanEvidenceTypes": ["MANUAL_DOC", "GENERATED_DOC"],
+    "expectedEvidenceTypes": ["MANUAL_DOC"],
+    "expectedScoreReasonsAtK": [
+      "preferred_evidence:MANUAL_DOC*"
+    ],
+    "expectedSourcePaths": [".ai/manual/operator-runbook.md"],
+    "forbiddenSourcePaths": ["docs/benchmarks/*"],
+    "maxGenericDocsAtK": 3,
+    "expectedEvidenceEvaluationStatus": "sufficient",
+    "expectedNoAnswerRequired": false,
+    "answerMustContainAll": ["Docker Compose", "Prometheus", "Grafana"],
+    "answerMustContainAny": ["runbook", "operator"],
+    "answerMustNotContain": ["135ms", "Insufficient evidence"],
+    "noAnswerExpected": false
+  }
+]
+'@
+    return @($json | ConvertFrom-Json)
 }
 
 function Initialize-KnowledgeFixture {
@@ -1155,10 +1299,14 @@ function Write-Reports {
 }
 
 $casesFile = Resolve-RepoPath $CasesPath
-if (-not (Test-Path -LiteralPath $casesFile)) {
+$defaultCasesFile = Resolve-RepoPath $DefaultCasesPath
+if (Test-Path -LiteralPath $casesFile) {
+    $loadedCases = Get-Content -Raw -Encoding UTF8 -LiteralPath $casesFile | ConvertFrom-Json
+} elseif ([string]::Equals($casesFile, $defaultCasesFile, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $loadedCases = Get-DefaultKnowledgeRagAcceptanceCases
+} else {
     throw "CasesPath does not exist: $casesFile"
 }
-$loadedCases = Get-Content -Raw -Encoding UTF8 -LiteralPath $casesFile | ConvertFrom-Json
 $cases = @(As-Array $loadedCases)
 if ($CaseLimit -gt 0) {
     $cases = @($cases | Select-Object -First $CaseLimit)
