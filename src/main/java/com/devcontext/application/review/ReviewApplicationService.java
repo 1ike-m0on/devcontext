@@ -183,7 +183,15 @@ public class ReviewApplicationService {
             observationCaptureService.captureReviewRecord(updated);
 
             runService.finishRun(run, response.inputTokenEstimate(), response.outputTokenEstimate());
-            return new ReviewCreateResult(updated.id(), run.id(), updated.score(), updated.summary(), updated.reportPath(), diff.truncated());
+            return new ReviewCreateResult(
+                    updated.id(),
+                    run.id(),
+                    updated.score(),
+                    updated.summary(),
+                    updated.reportPath(),
+                    diff.truncated(),
+                    reviewMemorySignals
+            );
         } catch (RuntimeException e) {
             runService.failRun(run, e.getMessage());
             throw e;
@@ -198,7 +206,11 @@ public class ReviewApplicationService {
     public ReviewDetail getReview(Long reviewId) {
         ReviewRecord record = reviewRecordRepository.findById(reviewId)
                 .orElseThrow(() -> new ApiException("REVIEW_NOT_FOUND", "Review not found", HttpStatus.NOT_FOUND));
-        return new ReviewDetail(record, reviewIssueRepository.findByReviewId(reviewId));
+        return new ReviewDetail(
+                record,
+                reviewIssueRepository.findByReviewId(reviewId),
+                reviewMemorySignalsFor(record)
+        );
     }
 
     public List<ReviewRecord> listProjectReviews(Long projectId, int limit) {
@@ -208,7 +220,12 @@ public class ReviewApplicationService {
     public ReviewEventDetail getReviewEvents(Long reviewId) {
         ReviewRecord record = reviewRecordRepository.findById(reviewId)
                 .orElseThrow(() -> new ApiException("REVIEW_NOT_FOUND", "Review not found", HttpStatus.NOT_FOUND));
-        return new ReviewEventDetail(record.id(), record.runId(), runService.listEvents(record.runId()));
+        return new ReviewEventDetail(
+                record.id(),
+                record.runId(),
+                runService.listEvents(record.runId()),
+                reviewMemorySignalsFor(record)
+        );
     }
 
     public ReviewIssue updateIssueStatus(Long issueId, String status, String note) {
@@ -241,6 +258,10 @@ public class ReviewApplicationService {
             return summary;
         }
         return summary + " - " + note.trim();
+    }
+
+    private List<ReviewMemorySignal> reviewMemorySignalsFor(ReviewRecord record) {
+        return reviewMemorySignalService.findProjectSignalsBefore(record.projectId(), record.createdAt(), 8);
     }
 
     private List<DecisionSearchResult> recallReviewDecisions(Project project, GitDiff diff) {
