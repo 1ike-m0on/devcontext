@@ -103,6 +103,32 @@ export type ReviewRecord = {
   createdAt?: string;
 };
 
+export type ReviewMemorySignal = {
+  projectId: number;
+  reviewId: number;
+  issueId: number;
+  signalType: "confirmed_issue_pattern" | "false_positive_pattern" | string;
+  feedbackStatus: string;
+  title: string;
+  filePath?: string | null;
+  lineNumber?: number | null;
+  description?: string | null;
+  impact?: string | null;
+  suggestion?: string | null;
+  note?: string | null;
+  updatedAt?: string | null;
+};
+
+export type ReviewCreateResult = {
+  reviewId: number;
+  runId?: number;
+  score?: number;
+  summary?: string;
+  reportPath?: string;
+  diffTruncated?: boolean;
+  reviewMemorySignals?: ReviewMemorySignal[];
+};
+
 export type GitReviewSource = {
   sourceType: string;
   label: string;
@@ -123,6 +149,7 @@ export type GitReviewSource = {
 export type ReviewDetail = {
   review: ReviewRecord & { status?: string };
   issues: ReviewIssue[];
+  reviewMemorySignals?: ReviewMemorySignal[];
 };
 
 export type ContextDocumentStatus = {
@@ -372,7 +399,7 @@ export const api = {
       mode: string;
       selectedFiles?: string[] | null;
     },
-  ) => request<{ reviewId: number; runId?: number; diffTruncated?: boolean }>(`/api/projects/${projectId}/reviews`, { method: "POST", body: JSON.stringify(body) }),
+  ) => request<ReviewCreateResult>(`/api/projects/${projectId}/reviews`, { method: "POST", body: JSON.stringify(body) }),
   reviewSources: (projectId: number) => request<GitReviewSource[]>(`/api/projects/${projectId}/review-sources`),
   projectReviews: (projectId: number, limit = 20) => request<ReviewRecord[]>(`/api/projects/${projectId}/reviews?limit=${limit}`),
   review: (reviewId: number) => request<ReviewDetail>(`/api/reviews/${reviewId}`),
