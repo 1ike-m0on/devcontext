@@ -6,6 +6,10 @@ import java.util.List;
 public record ReviewEventDetail(
         Long reviewId,
         Long runId,
-        List<AgentEvent> events
+        List<AgentEvent> events,
+        List<ReviewMemorySignal> reviewMemorySignals
 ) {
+    public ReviewEventDetail(Long reviewId, Long runId, List<AgentEvent> events) {
+        this(reviewId, runId, events, List.of());
+    }
 }

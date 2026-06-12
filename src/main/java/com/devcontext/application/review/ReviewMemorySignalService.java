@@ -4,6 +4,7 @@ import com.devcontext.domain.review.ReviewIssue;
 import com.devcontext.domain.review.ReviewMemorySignal;
 import com.devcontext.domain.review.ReviewMemorySignalType;
 import com.devcontext.ports.review.ReviewIssueRepository;
+import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import org.springframework.stereotype.Service;
@@ -18,7 +19,18 @@ public class ReviewMemorySignalService {
     }
 
     public List<ReviewMemorySignal> findProjectSignals(Long projectId, int limit) {
-        return reviewIssueRepository.findRecentFeedbackByProjectId(projectId, limit).stream()
+        return signalsFromIssues(projectId, reviewIssueRepository.findRecentFeedbackByProjectId(projectId, limit));
+    }
+
+    public List<ReviewMemorySignal> findProjectSignalsBefore(Long projectId, Instant before, int limit) {
+        if (before == null) {
+            return findProjectSignals(projectId, limit);
+        }
+        return signalsFromIssues(projectId, reviewIssueRepository.findRecentFeedbackByProjectIdBefore(projectId, before, limit));
+    }
+
+    private List<ReviewMemorySignal> signalsFromIssues(Long projectId, List<ReviewIssue> issues) {
+        return issues.stream()
                 .map(issue -> toSignal(projectId, issue))
                 .flatMap(List::stream)
                 .toList();

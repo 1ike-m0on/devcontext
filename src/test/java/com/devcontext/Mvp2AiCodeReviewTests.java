@@ -89,6 +89,7 @@ class Mvp2AiCodeReviewTests {
         assertThat(reviewId).isPositive();
         assertThat(runId).isPositive();
         assertThat(reportPath).isEqualTo(".ai/reviews/review-" + reviewId + ".md");
+        assertThat(createJson.path("reviewMemorySignals")).isEmpty();
         assertThat(Files.readString(projectRoot.resolve(reportPath)))
                 .contains("AI Code Review Report")
                 .contains("Possible null dereference");
@@ -124,6 +125,7 @@ class Mvp2AiCodeReviewTests {
         assertThat(detailJson.path("review").path("score").asDouble()).isEqualTo(2.4);
         assertThat(issueJson.path("severity").asText()).isEqualTo("critical");
         assertThat(issueJson.path("status").asText()).isEqualTo("pending");
+        assertThat(detailJson.path("reviewMemorySignals")).isEmpty();
 
         String updateResponse = mockMvc.perform(patch("/api/review-issues/{issueId}", issueId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -157,6 +159,8 @@ class Mvp2AiCodeReviewTests {
                 .getContentAsString();
 
         JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
+        JsonNode eventMemorySignals = objectMapper.readTree(eventsResponse).path("data").path("reviewMemorySignals");
+        assertThat(eventMemorySignals).isEmpty();
         assertThat(events).hasSize(12);
         assertThat(events)
                 .extracting(event -> event.path("eventType").asText())
@@ -583,7 +587,19 @@ class Mvp2AiCodeReviewTests {
                 .getResponse()
                 .getContentAsString();
 
-        long secondReviewId = objectMapper.readTree(secondCreateResponse).path("data").path("reviewId").asLong();
+        JsonNode secondCreateJson = objectMapper.readTree(secondCreateResponse).path("data");
+        long secondReviewId = secondCreateJson.path("reviewId").asLong();
+        assertThat(secondCreateJson.path("reviewMemorySignals")).hasSize(1);
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("signalType").asText())
+                .isEqualTo("confirmed_issue_pattern");
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("feedbackStatus").asText())
+                .isEqualTo("accepted");
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("projectId").asLong())
+                .isEqualTo(project.id());
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("reviewId").asLong())
+                .isEqualTo(firstReviewId);
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
+                .isEqualTo(issueId);
         String prompt = llmClient.lastRequest().get().prompt();
         assertThat(prompt)
                 .contains("Review memory signals from this project's prior human code-review feedback.")
@@ -594,6 +610,18 @@ class Mvp2AiCodeReviewTests {
                 .contains("issueId=" + issueId)
                 .contains("Confirmed nullable repository lookup pattern for this project.");
 
+        String secondDetailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", secondReviewId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode detailMemorySignals = objectMapper.readTree(secondDetailResponse).path("data").path("reviewMemorySignals");
+        assertThat(detailMemorySignals).hasSize(1);
+        assertThat(detailMemorySignals.get(0).path("signalType").asText()).isEqualTo("confirmed_issue_pattern");
+        assertThat(detailMemorySignals.get(0).path("reviewId").asLong()).isEqualTo(firstReviewId);
+        assertThat(detailMemorySignals.get(0).path("issueId").asLong()).isEqualTo(issueId);
+
         String eventsResponse = mockMvc.perform(get("/api/reviews/{reviewId}/events", secondReviewId))
                 .andExpect(status().isOk())
                 .andReturn()
@@ -601,6 +629,11 @@ class Mvp2AiCodeReviewTests {
                 .getContentAsString();
 
         JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
+        JsonNode eventMemorySignals = objectMapper.readTree(eventsResponse).path("data").path("reviewMemorySignals");
+        assertThat(eventMemorySignals).hasSize(1);
+        assertThat(eventMemorySignals.get(0).path("signalType").asText()).isEqualTo("confirmed_issue_pattern");
+        assertThat(eventMemorySignals.get(0).path("reviewId").asLong()).isEqualTo(firstReviewId);
+        assertThat(eventMemorySignals.get(0).path("issueId").asLong()).isEqualTo(issueId);
         assertThat(events)
                 .filteredOn(event -> "REVIEW_FEEDBACK_MEMORY_LOADED".equals(event.path("eventType").asText()))
                 .first()
@@ -663,7 +696,19 @@ class Mvp2AiCodeReviewTests {
                 .getResponse()
                 .getContentAsString();
 
-        long secondReviewId = objectMapper.readTree(secondCreateResponse).path("data").path("reviewId").asLong();
+        JsonNode secondCreateJson = objectMapper.readTree(secondCreateResponse).path("data");
+        long secondReviewId = secondCreateJson.path("reviewId").asLong();
+        assertThat(secondCreateJson.path("reviewMemorySignals")).hasSize(1);
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("signalType").asText())
+                .isEqualTo("false_positive_pattern");
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("feedbackStatus").asText())
+                .isEqualTo("false_positive");
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("projectId").asLong())
+                .isEqualTo(project.id());
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("reviewId").asLong())
+                .isEqualTo(firstReviewId);
+        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
+                .isEqualTo(issueId);
         assertThat(llmClient.lastRequest().get().prompt())
                 .contains("Review memory signals from this project's prior human code-review feedback.")
                 .contains("False-positive suppression patterns")
@@ -680,7 +725,15 @@ class Mvp2AiCodeReviewTests {
                 .getResponse()
                 .getContentAsString();
 
-        assertThat(objectMapper.readTree(secondDetailResponse).path("data").path("issues")).isEmpty();
+        JsonNode secondDetailJson = objectMapper.readTree(secondDetailResponse).path("data");
+        assertThat(secondDetailJson.path("issues")).isEmpty();
+        assertThat(secondDetailJson.path("reviewMemorySignals")).hasSize(1);
+        assertThat(secondDetailJson.path("reviewMemorySignals").get(0).path("signalType").asText())
+                .isEqualTo("false_positive_pattern");
+        assertThat(secondDetailJson.path("reviewMemorySignals").get(0).path("reviewId").asLong())
+                .isEqualTo(firstReviewId);
+        assertThat(secondDetailJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
+                .isEqualTo(issueId);
 
         String eventsResponse = mockMvc.perform(get("/api/reviews/{reviewId}/events", secondReviewId))
                 .andExpect(status().isOk())
@@ -689,6 +742,11 @@ class Mvp2AiCodeReviewTests {
                 .getContentAsString();
 
         JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
+        JsonNode eventMemorySignals = objectMapper.readTree(eventsResponse).path("data").path("reviewMemorySignals");
+        assertThat(eventMemorySignals).hasSize(1);
+        assertThat(eventMemorySignals.get(0).path("signalType").asText()).isEqualTo("false_positive_pattern");
+        assertThat(eventMemorySignals.get(0).path("reviewId").asLong()).isEqualTo(firstReviewId);
+        assertThat(eventMemorySignals.get(0).path("issueId").asLong()).isEqualTo(issueId);
         assertThat(events)
                 .extracting(event -> event.path("eventType").asText())
                 .contains("REVIEW_FEEDBACK_MEMORY_LOADED");
