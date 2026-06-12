@@ -19,6 +19,7 @@ import com.devcontext.domain.llm.LlmRequest;
 import com.devcontext.domain.llm.LlmResponse;
 import com.devcontext.domain.project.Project;
 import com.devcontext.domain.review.ParsedReviewReport;
+import com.devcontext.domain.review.ReviewContextCoverage;
 import com.devcontext.domain.review.ReviewCreateResult;
 import com.devcontext.domain.review.ReviewDetail;
 import com.devcontext.domain.review.ReviewEventDetail;
@@ -190,7 +191,8 @@ public class ReviewApplicationService {
                     updated.summary(),
                     updated.reportPath(),
                     diff.truncated(),
-                    reviewMemorySignals
+                    reviewMemorySignals,
+                    ReviewContextCoverage.from(contextItems)
             );
         } catch (RuntimeException e) {
             runService.failRun(run, e.getMessage());
