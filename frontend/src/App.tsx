@@ -50,6 +50,7 @@ import {
   RagAnswerResult,
   ReviewDetail,
   ReviewIssue,
+  ReviewMemorySignal,
   ReviewRecord,
 } from "@/lib/api";
 import { asNumberOrNull, cn, splitTags } from "@/lib/utils";
@@ -1231,6 +1232,7 @@ function ReviewResultPanel({
                 <StateLine label="Run ID" value={String(detail.review.runId ?? "-")} />
               </div>
             </div>
+            <ReviewMemorySignalsPanel signals={detail.reviewMemorySignals} />
             {detail.issues.length === 0 ? (
               <EmptyState text="这次审查没有解析出问题。" />
             ) : (
@@ -1244,6 +1246,97 @@ function ReviewResultPanel({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ReviewMemorySignalsPanel({ signals }: { signals?: ReviewMemorySignal[] | null }) {
+  const items = signals ?? [];
+  if (items.length === 0) return null;
+
+  const confirmed = items.filter((signal) => signal.signalType === "confirmed_issue_pattern");
+  const suppressions = items.filter((signal) => signal.signalType === "false_positive_pattern");
+  const other = items.filter((signal) => signal.signalType !== "confirmed_issue_pattern" && signal.signalType !== "false_positive_pattern");
+
+  return (
+    <section className="min-w-0 rounded-md border border-border bg-background p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">反馈记忆信号</div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">本次 Review 使用的历史人工反馈，用来强化已确认模式或抑制重复误报。</p>
+        </div>
+        <Badge variant="secondary">{items.length} 条</Badge>
+      </div>
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <ReviewMemorySignalGroup
+          title="已确认问题模式"
+          description="accepted / fixed 反馈会让相似问题更值得关注。"
+          signals={confirmed}
+          tone="confirmed"
+        />
+        <ReviewMemorySignalGroup
+          title="误报抑制模式"
+          description="false_positive / rejected 反馈会提醒后续审查降低重复误报。"
+          signals={suppressions}
+          tone="suppressed"
+        />
+        <ReviewMemorySignalGroup
+          title="其他反馈信号"
+          description="暂未归入固定类别的历史反馈。"
+          signals={other}
+          tone="neutral"
+        />
+      </div>
+    </section>
+  );
+}
+
+function ReviewMemorySignalGroup({
+  title,
+  description,
+  signals,
+  tone,
+}: {
+  title: string;
+  description: string;
+  signals: ReviewMemorySignal[];
+  tone: "confirmed" | "suppressed" | "neutral";
+}) {
+  if (signals.length === 0) return null;
+
+  return (
+    <div className={cn("min-w-0 rounded-md border p-3", reviewSignalToneClass(tone))}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{title}</div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+        </div>
+        <Badge variant={tone === "suppressed" ? "warning" : tone === "confirmed" ? "success" : "secondary"}>{signals.length}</Badge>
+      </div>
+      <div className="mt-3 grid gap-2">
+        {signals.map((signal, index) => (
+          <ReviewMemorySignalItem key={`${signal.signalType}:${signal.reviewId}:${signal.issueId}:${signal.updatedAt ?? index}`} signal={signal} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReviewMemorySignalItem({ signal }: { signal: ReviewMemorySignal }) {
+  const source = `Review #${signal.reviewId} · Issue #${signal.issueId}`;
+  const location = signal.filePath ? `${signal.filePath}${signal.lineNumber ? `:${signal.lineNumber}` : ""}` : null;
+
+  return (
+    <div className="min-w-0 rounded-md border border-border/70 bg-muted/20 p-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <Badge variant={signal.signalType === "false_positive_pattern" ? "warning" : signal.signalType === "confirmed_issue_pattern" ? "success" : "secondary"}>
+          {reviewSignalTypeLabel(signal.signalType)}
+        </Badge>
+        <Badge variant={statusBadge(signal.feedbackStatus)}>{signal.feedbackStatus}</Badge>
+        <span className="font-mono text-xs text-muted-foreground">{source}</span>
+      </div>
+      <div className="mt-2 break-words text-sm font-medium">{signal.title}</div>
+      {location ? <div className="mt-2 truncate rounded bg-background px-2 py-1 font-mono text-xs text-muted-foreground">{location}</div> : null}
+    </div>
   );
 }
 
@@ -2537,6 +2630,20 @@ function statusBadge(status?: string) {
   if (status === "false_positive" || status === "deprecated" || status === "rejected") return "warning";
   if (status === "failed") return "danger";
   return "secondary";
+}
+
+function reviewSignalToneClass(tone: "confirmed" | "suppressed" | "neutral") {
+  if (tone === "confirmed") return "border-emerald-400/20 bg-emerald-400/5";
+  if (tone === "suppressed") return "border-amber-400/20 bg-amber-400/5";
+  return "border-border bg-muted/20";
+}
+
+function reviewSignalTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    confirmed_issue_pattern: "confirmed_issue_pattern",
+    false_positive_pattern: "false_positive_pattern",
+  };
+  return labels[type] ?? type;
 }
 
 function statusLabel(status: string) {
