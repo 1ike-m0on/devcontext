@@ -7,12 +7,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.devcontext.application.project.ProjectApplicationService;
+import com.devcontext.domain.graph.ProjectGraphEdge;
+import com.devcontext.domain.graph.ProjectGraphNode;
 import com.devcontext.domain.llm.LlmRequest;
 import com.devcontext.domain.llm.LlmResponse;
 import com.devcontext.domain.profile.ProjectProfile;
 import com.devcontext.domain.profile.ProjectProfileFact;
 import com.devcontext.domain.profile.ProjectProfileSourceReference;
 import com.devcontext.domain.project.Project;
+import com.devcontext.ports.graph.ProjectGraphRepository;
 import com.devcontext.ports.llm.LlmClient;
 import com.devcontext.ports.profile.ProjectProfileRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -67,6 +70,9 @@ class Mvp2AiCodeReviewTests {
     @Autowired
     private ProjectProfileRepository profileRepository;
 
+    @Autowired
+    private ProjectGraphRepository graphRepository;
+
     @TempDir
     private Path projectRoot;
 
@@ -120,7 +126,8 @@ class Mvp2AiCodeReviewTests {
                 .contains("Use REVIEW_FEEDBACK_MEMORY signals to calibrate precision")
                 .contains("Do not repeat false_positive_pattern entries")
                 .contains("Return at most 4 issues")
-                .doesNotContain("ProjectProfile facts for code review.");
+                .doesNotContain("ProjectProfile facts for code review.")
+                .doesNotContain("ProjectGraph one-hop neighbors for code review.");
 
         String detailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", reviewId))
                 .andExpect(status().isOk())
@@ -596,6 +603,77 @@ class Mvp2AiCodeReviewTests {
     }
 
     @Test
+    void injectsExistingProjectGraphNeighborsIntoReviewPrompt() throws Exception {
+        createReviewFixture(projectRoot);
+        Project project = projectService.createProject("graph-aware-review-project", projectRoot.toString(), "main");
+        Instant now = Instant.now();
+        graphRepository.replaceProjectGraph(
+                project.id(),
+                List.of(
+                        graphNode(project.id(), "file", "file:src/main/java/demo/UserService.java",
+                                "UserService.java", "src/main/java/demo/UserService.java", now),
+                        graphNode(project.id(), "symbol", "symbol:src/main/java/demo/UserService.java#UserService",
+                                "UserService", "src/main/java/demo/UserService.java", now),
+                        graphNode(project.id(), "module", "module:demo",
+                                "demo", ".ai/code-map.json", now),
+                        graphNode(project.id(), "endpoint", "endpoint:GET /api/users/{id}",
+                                "GET /api/users/{id}", "src/main/java/demo/UserService.java", now),
+                        graphNode(project.id(), "profile_fact", "profile_fact:database:users",
+                                "database: users table", "src/main/resources/db/schema.sql", now),
+                        graphNode(project.id(), "runtime_component", "runtime_component:batch",
+                                "batch worker", "src/main/java/demo/BatchWorker.java", now)
+                ),
+                List.of(
+                        graphEdge(project.id(), "declares", "declares:file->symbol",
+                                "file:src/main/java/demo/UserService.java",
+                                "symbol:src/main/java/demo/UserService.java#UserService",
+                                "src/main/java/demo/UserService.java", now),
+                        graphEdge(project.id(), "contains", "contains:module->file",
+                                "module:demo",
+                                "file:src/main/java/demo/UserService.java",
+                                ".ai/code-map.json", now),
+                        graphEdge(project.id(), "defined_in", "defined_in:endpoint->file",
+                                "endpoint:GET /api/users/{id}",
+                                "file:src/main/java/demo/UserService.java",
+                                "src/main/java/demo/UserService.java", now),
+                        graphEdge(project.id(), "supported_by", "supported_by:fact->file",
+                                "profile_fact:database:users",
+                                "file:src/main/java/demo/UserService.java",
+                                "src/main/resources/db/schema.sql", now),
+                        graphEdge(project.id(), "runs", "runs:file->runtime",
+                                "file:src/main/java/demo/UserService.java",
+                                "runtime_component:batch",
+                                "src/main/java/demo/BatchWorker.java", now)
+                )
+        );
+
+        mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "manual",
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/graph-context",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        String prompt = llmClient.lastRequest().get().prompt();
+        assertThat(prompt)
+                .contains("--- PROJECT_GRAPH_NEIGHBORS | ProjectGraph one-hop neighbors | priority=810 | source=project-graph:" + project.id() + " ---")
+                .contains("ProjectGraph one-hop neighbors for code review.")
+                .contains("Touched paths: src/main/java/demo/UserService.java")
+                .contains("Seed [file] UserService.java sourcePath=src/main/java/demo/UserService.java")
+                .contains("--declares--> [symbol] UserService sourcePath=src/main/java/demo/UserService.java")
+                .contains("<--contains-- [module] demo sourcePath=.ai/code-map.json")
+                .contains("<--defined_in-- [endpoint] GET /api/users/{id} sourcePath=src/main/java/demo/UserService.java")
+                .contains("<--supported_by-- [profile_fact] database: users table sourcePath=src/main/resources/db/schema.sql")
+                .doesNotContain("runtime_component");
+    }
+
+    @Test
     void acceptedReviewFeedbackBecomesConfirmedReviewMemorySignal() throws Exception {
         createReviewFixture(projectRoot);
         Project project = projectService.createProject("confirmed-feedback-review-project", projectRoot.toString(), "main");
@@ -830,6 +908,55 @@ class Mvp2AiCodeReviewTests {
             assertThat(input).as("test resource %s", resourcePath).isNotNull();
             return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    private ProjectGraphNode graphNode(
+            Long projectId,
+            String nodeType,
+            String stableKey,
+            String label,
+            String sourcePath,
+            Instant now
+    ) {
+        return new ProjectGraphNode(
+                null,
+                projectId,
+                nodeType,
+                stableKey,
+                label,
+                sourcePath,
+                "CODE_MAP",
+                "code_structure",
+                "derived",
+                now,
+                now
+        );
+    }
+
+    private ProjectGraphEdge graphEdge(
+            Long projectId,
+            String edgeType,
+            String stableKey,
+            String fromNodeKey,
+            String toNodeKey,
+            String sourcePath,
+            Instant now
+    ) {
+        return new ProjectGraphEdge(
+                null,
+                projectId,
+                edgeType,
+                stableKey,
+                fromNodeKey,
+                toNodeKey,
+                edgeType,
+                sourcePath,
+                "CODE_MAP",
+                "code_structure",
+                "derived",
+                now,
+                now
+        );
     }
 
     private ProjectProfileFact profileFact(
