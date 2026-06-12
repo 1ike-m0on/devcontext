@@ -105,6 +105,8 @@ class Mvp2AiCodeReviewTests {
         assertThat(runId).isPositive();
         assertThat(reportPath).isEqualTo(".ai/reviews/review-" + reviewId + ".md");
         assertThat(createJson.path("reviewMemorySignals")).isEmpty();
+        assertContextCoverage(createJson, true, false, false, false, false);
+        assertContextSourceTypes(createJson, "GIT_DIFF", "PROJECT_AGENTS", "CODING_PREFERENCES", "REVIEW_RULES");
         assertThat(Files.readString(projectRoot.resolve(reportPath)))
                 .contains("AI Code Review Report")
                 .contains("Possible null dereference");
@@ -526,7 +528,10 @@ class Mvp2AiCodeReviewTests {
                 .getResponse()
                 .getContentAsString();
 
-        long reviewId = objectMapper.readTree(createResponse).path("data").path("reviewId").asLong();
+        JsonNode createJson = objectMapper.readTree(createResponse).path("data");
+        long reviewId = createJson.path("reviewId").asLong();
+        assertContextCoverage(createJson, true, false, false, false, true);
+        assertContextSourceTypes(createJson, "DECISION_MEMORY");
         String prompt = llmClient.lastRequest().get().prompt();
         assertThat(prompt)
                 .contains("Relevant engineering decisions recalled for this code review.")
@@ -577,7 +582,7 @@ class Mvp2AiCodeReviewTests {
                 now
         ));
 
-        mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+        String createResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -588,7 +593,14 @@ class Mvp2AiCodeReviewTests {
                                   "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
                                 }
                                 """))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode createJson = objectMapper.readTree(createResponse).path("data");
+        assertContextCoverage(createJson, true, true, false, false, false);
+        assertContextSourceTypes(createJson, "PROJECT_PROFILE_FACTS");
 
         String prompt = llmClient.lastRequest().get().prompt();
         assertThat(prompt)
@@ -647,7 +659,7 @@ class Mvp2AiCodeReviewTests {
                 )
         );
 
-        mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+        String createResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -658,7 +670,14 @@ class Mvp2AiCodeReviewTests {
                                   "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
                                 }
                                 """))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode createJson = objectMapper.readTree(createResponse).path("data");
+        assertContextCoverage(createJson, true, false, true, false, false);
+        assertContextSourceTypes(createJson, "PROJECT_GRAPH_NEIGHBORS");
 
         String prompt = llmClient.lastRequest().get().prompt();
         assertThat(prompt)
@@ -741,6 +760,8 @@ class Mvp2AiCodeReviewTests {
                 .isEqualTo(firstReviewId);
         assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
                 .isEqualTo(issueId);
+        assertContextCoverage(secondCreateJson, true, false, false, true, false);
+        assertContextSourceTypes(secondCreateJson, "REVIEW_FEEDBACK_MEMORY");
         String prompt = llmClient.lastRequest().get().prompt();
         assertThat(prompt)
                 .contains("Review memory signals from this project's prior human code-review feedback.")
@@ -850,6 +871,8 @@ class Mvp2AiCodeReviewTests {
                 .isEqualTo(firstReviewId);
         assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
                 .isEqualTo(issueId);
+        assertContextCoverage(secondCreateJson, true, false, false, true, false);
+        assertContextSourceTypes(secondCreateJson, "REVIEW_FEEDBACK_MEMORY");
         assertThat(llmClient.lastRequest().get().prompt())
                 .contains("Review memory signals from this project's prior human code-review feedback.")
                 .contains("False-positive suppression patterns")
@@ -975,6 +998,29 @@ class Mvp2AiCodeReviewTests {
             String sourceReliability
     ) {
         return new ProjectProfileSourceReference(sourcePath, evidenceType, sourceKind, sourceReliability);
+    }
+
+    private void assertContextCoverage(
+            JsonNode createJson,
+            boolean reviewRules,
+            boolean projectProfile,
+            boolean projectGraph,
+            boolean reviewMemorySignals,
+            boolean decisionMemory
+    ) {
+        JsonNode coverage = createJson.path("contextCoverage");
+        assertThat(coverage.path("sourceCount").asInt()).isPositive();
+        assertThat(coverage.path("reviewRules").asBoolean()).isEqualTo(reviewRules);
+        assertThat(coverage.path("projectProfile").asBoolean()).isEqualTo(projectProfile);
+        assertThat(coverage.path("projectGraph").asBoolean()).isEqualTo(projectGraph);
+        assertThat(coverage.path("reviewMemorySignals").asBoolean()).isEqualTo(reviewMemorySignals);
+        assertThat(coverage.path("decisionMemory").asBoolean()).isEqualTo(decisionMemory);
+    }
+
+    private void assertContextSourceTypes(JsonNode createJson, String... sourceTypes) {
+        assertThat(createJson.path("contextCoverage").path("sourceTypes"))
+                .extracting(JsonNode::asText)
+                .contains(sourceTypes);
     }
 
     private void createReviewFixture(Path root) throws IOException {

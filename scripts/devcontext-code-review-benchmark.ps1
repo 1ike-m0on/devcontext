@@ -79,6 +79,73 @@ function As-Array {
     return @($Value)
 }
 
+function Get-ObjectPropertyValue {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [object]$Default = $null
+    )
+    if ($null -ne $Object -and $Object.PSObject.Properties.Name -contains $Name) {
+        return $Object.$Name
+    }
+    return $Default
+}
+
+function Normalize-ReviewContextCoverage {
+    param([object]$Coverage)
+
+    if ($null -eq $Coverage) {
+        return [pscustomobject]@{
+            sourceCount = 0
+            totalTokenEstimate = 0
+            sourceTypes = @()
+            sources = @()
+            reviewRules = $false
+            projectProfile = $false
+            projectGraph = $false
+            reviewMemorySignals = $false
+            decisionMemory = $false
+        }
+    }
+
+    $sourceTypesValue = Get-ObjectPropertyValue -Object $Coverage -Name "sourceTypes" -Default @()
+    $sourceTypes = @(As-Array $sourceTypesValue | ForEach-Object { [string]$_ })
+    $sourcesValue = Get-ObjectPropertyValue -Object $Coverage -Name "sources" -Default @()
+    $sources = @()
+    foreach ($source in As-Array $sourcesValue) {
+        $sources += [pscustomobject]@{
+            type = [string](Get-ObjectPropertyValue -Object $source -Name "type" -Default "")
+            title = [string](Get-ObjectPropertyValue -Object $source -Name "title" -Default "")
+            source = [string](Get-ObjectPropertyValue -Object $source -Name "source" -Default "")
+            priority = [int](Get-ObjectPropertyValue -Object $source -Name "priority" -Default 0)
+            tokenEstimate = [int](Get-ObjectPropertyValue -Object $source -Name "tokenEstimate" -Default 0)
+        }
+    }
+
+    return [pscustomobject]@{
+        sourceCount = [int](Get-ObjectPropertyValue -Object $Coverage -Name "sourceCount" -Default $sources.Count)
+        totalTokenEstimate = [int](Get-ObjectPropertyValue -Object $Coverage -Name "totalTokenEstimate" -Default 0)
+        sourceTypes = $sourceTypes
+        sources = $sources
+        reviewRules = [bool](Get-ObjectPropertyValue -Object $Coverage -Name "reviewRules" -Default $false)
+        projectProfile = [bool](Get-ObjectPropertyValue -Object $Coverage -Name "projectProfile" -Default $false)
+        projectGraph = [bool](Get-ObjectPropertyValue -Object $Coverage -Name "projectGraph" -Default $false)
+        reviewMemorySignals = [bool](Get-ObjectPropertyValue -Object $Coverage -Name "reviewMemorySignals" -Default $false)
+        decisionMemory = [bool](Get-ObjectPropertyValue -Object $Coverage -Name "decisionMemory" -Default $false)
+    }
+}
+
+function Get-ContextCoverageFlagCount {
+    param(
+        [object[]]$Cases,
+        [string]$Property
+    )
+    return @($Cases | Where-Object {
+            $coverage = Get-ObjectPropertyValue -Object $_ -Name "contextCoverage" -Default $null
+            $null -ne $coverage -and [bool](Get-ObjectPropertyValue -Object $coverage -Name $Property -Default $false)
+        }).Count
+}
+
 function Get-CaseSplit {
     param([object]$Case)
     if ($null -ne $Case -and $Case.PSObject.Properties.Name -contains "split" -and -not [string]::IsNullOrWhiteSpace([string]$Case.split)) {
@@ -268,6 +335,73 @@ transaction boundaries, idempotency, security, and missing tests.
 - If production business logic changes and no test file changes are present,
   report the missing focused tests as a warning ReviewIssue.
 "@
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $Root "src/main/java/com/acme/UserService.java") -Value @"
+package com.acme;
+
+class UserService {
+    String userName(Long id) {
+        return "benchmark";
+    }
+}
+"@
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $Root ".ai/code-map.json") -Value @"
+{
+  "generatedAt": "$((Get-Date).ToString("o"))",
+  "projectName": "code-review-benchmark-$RunId",
+  "rootPath": "$($Root -replace '\\', '\\')",
+  "language": "Java",
+  "framework": "Spring Boot",
+  "buildTool": "Maven",
+  "gitBranch": "main",
+  "gitCommit": "benchmark",
+  "modules": [
+    {
+      "name": "user",
+      "path": "src/main/java/com/acme",
+      "classes": ["UserService"],
+      "responsibility": "benchmark user workflow"
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "service",
+      "file": "src/main/java/com/acme/UserService.java",
+      "methods": ["userName"]
+    }
+  ],
+  "symbols": [
+    {
+      "name": "UserService",
+      "role": "service",
+      "module": "user",
+      "file": "src/main/java/com/acme/UserService.java",
+      "methods": ["userName"],
+      "endpoints": [],
+      "dependencies": [],
+      "technologies": ["Java"],
+      "domainTerms": ["user"]
+    }
+  ],
+  "endpoints": [],
+  "dependencies": [],
+  "technologies": [
+    {
+      "technology": "Spring Boot",
+      "classes": ["UserService"],
+      "files": ["src/main/java/com/acme/UserService.java"]
+    }
+  ],
+  "runtimeComponents": [],
+  "domainTerms": [],
+  "commands": {
+    "test": "mvn test"
+  },
+  "configs": ["pom.xml"],
+  "testRoots": ["src/test/java"],
+  "docs": ["AGENTS.md", ".ai/manual/coding-preferences.md"],
+  "todos": []
+}
+"@
 }
 
 function New-BenchmarkProject {
@@ -282,6 +416,22 @@ function New-BenchmarkProject {
         defaultBranch = "main"
     }
     return $response.data
+}
+
+function Initialize-BenchmarkContextSources {
+    param([object]$Project)
+    try {
+        $profile = Invoke-DevContextApi -Method "Get" -Path "/api/projects/$($Project.id)/profile"
+        Write-Host "ProjectProfile context warmed: status=$($profile.data.status)"
+    } catch {
+        Write-Warning "ProjectProfile context warmup failed: $($_.Exception.Message)"
+    }
+    try {
+        $graph = Invoke-DevContextApi -Method "Get" -Path "/api/projects/$($Project.id)/graph"
+        Write-Host "ProjectGraph context status: $($graph.data.status), nodes=$($graph.data.nodeCount), edges=$($graph.data.edgeCount)"
+    } catch {
+        Write-Warning "ProjectGraph context inspection failed: $($_.Exception.Message)"
+    }
 }
 
 function Normalize-MatchText {
@@ -878,6 +1028,7 @@ function Evaluate-ReviewCase {
         $eventCompleteness = if ($requiredEvents.Count -eq 0) { 1 } else { $presentEventCount / $requiredEvents.Count }
         $structuredParseSuccess = ($eventTypes -contains "LLM_RESPONSE_PARSED")
         $issueOutputPresent = $(if ($isNoIssueCase) { $returnedIssueCount -eq 0 } else { $returnedIssueCount -gt 0 })
+        $contextCoverage = Normalize-ReviewContextCoverage -Coverage $create.data.contextCoverage
 
         return [pscustomobject]@{
             name = $Case.name
@@ -916,6 +1067,13 @@ function Evaluate-ReviewCase {
             locationAccuracy = if ($hitCount -eq 0) { 0 } else { [math]::Round($lineHitCount / $hitCount, 3) }
             eventCompleteness = [math]::Round($eventCompleteness, 3)
             missingEvents = @($requiredEvents | Where-Object { $eventTypes -notcontains $_ })
+            contextCoverage = $contextCoverage
+            contextSourceTypes = $contextCoverage.sourceTypes
+            contextReviewRules = $contextCoverage.reviewRules
+            contextProjectProfile = $contextCoverage.projectProfile
+            contextProjectGraph = $contextCoverage.projectGraph
+            contextReviewMemorySignals = $contextCoverage.reviewMemorySignals
+            contextDecisionMemory = $contextCoverage.decisionMemory
             attemptCount = $attemptResults.Count
             retryCount = [math]::Max(0, $attemptResults.Count - 1)
             attempts = $attemptResults
@@ -969,6 +1127,13 @@ function Evaluate-ReviewCase {
             locationAccuracy = 0
             eventCompleteness = 0
             missingEvents = $requiredEvents
+            contextCoverage = Normalize-ReviewContextCoverage -Coverage $null
+            contextSourceTypes = @()
+            contextReviewRules = $false
+            contextProjectProfile = $false
+            contextProjectGraph = $false
+            contextReviewMemorySignals = $false
+            contextDecisionMemory = $false
             attemptCount = $attemptResults.Count
             retryCount = [math]::Max(0, $attemptResults.Count - 1)
             attempts = $attemptResults
@@ -1047,6 +1212,22 @@ function Summarize-Results {
     $completedNoIssuePassCount = @($completedNoIssueCases | Where-Object { $_.noIssuePass }).Count
     $noIssueFalsePositiveCount = Get-Sum -Items $noIssueCases -Property "returnedIssueCount"
     $completedNoIssueFalsePositiveCount = Get-Sum -Items $completedNoIssueCases -Property "returnedIssueCount"
+    $contextCoverageCases = @($completedCases | Where-Object {
+            $null -ne (Get-ObjectPropertyValue -Object $_ -Name "contextCoverage" -Default $null)
+        })
+    $contextCoverageSourceTypes = @($contextCoverageCases | ForEach-Object {
+            $coverage = Get-ObjectPropertyValue -Object $_ -Name "contextCoverage" -Default $null
+            As-Array (Get-ObjectPropertyValue -Object $coverage -Name "sourceTypes" -Default @())
+        } | Sort-Object -Unique)
+    $contextCoverage = [pscustomobject]@{
+        completedCaseCount = $contextCoverageCases.Count
+        reviewRulesCount = Get-ContextCoverageFlagCount -Cases $contextCoverageCases -Property "reviewRules"
+        projectProfileCount = Get-ContextCoverageFlagCount -Cases $contextCoverageCases -Property "projectProfile"
+        projectGraphCount = Get-ContextCoverageFlagCount -Cases $contextCoverageCases -Property "projectGraph"
+        reviewMemorySignalsCount = Get-ContextCoverageFlagCount -Cases $contextCoverageCases -Property "reviewMemorySignals"
+        decisionMemoryCount = Get-ContextCoverageFlagCount -Cases $contextCoverageCases -Property "decisionMemory"
+        observedSourceTypes = $contextCoverageSourceTypes
+    }
     $splitSummaries = @()
     $categorySummaries = @()
     if (-not $SkipGroups) {
@@ -1128,6 +1309,7 @@ function Summarize-Results {
         completedHardAcceptedIssueCount = $completedHardAcceptedIssueCount
         completedSemanticRescueCount = $completedSemanticRescueCount
         completedHardFalsePositiveCount = $completedHardFalsePositiveCount
+        contextCoverage = $contextCoverage
         splitSummaries = $splitSummaries
         categorySummaries = $categorySummaries
     }
@@ -1204,6 +1386,29 @@ function Write-Reports {
     $lines += "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"
     $lines += "| End-to-end | $($Summary.hardAcceptedIssuePrecision) | $($Summary.acceptedIssuePrecision) | $($Summary.semanticRescueCount) | $($Summary.hardUnexpectedIssueRate) | $($Summary.unexpectedIssueRate) | $($Summary.semanticUnexpectedDelta) |"
     $lines += "| Completed cases only | $($Summary.completedHardAcceptedIssuePrecision) | $($Summary.completedAcceptedIssuePrecision) | $($Summary.completedSemanticRescueCount) | $($Summary.completedHardUnexpectedIssueRate) | $($Summary.completedUnexpectedIssueRate) | $($Summary.completedSemanticUnexpectedDelta) |"
+    $lines += ""
+    $lines += "## Context Coverage"
+    $lines += ""
+    $lines += "| Source | Completed Cases Present |"
+    $lines += "| --- | ---: |"
+    $lines += "| Review rules | $($Summary.contextCoverage.reviewRulesCount) |"
+    $lines += "| ProjectProfile context | $($Summary.contextCoverage.projectProfileCount) |"
+    $lines += "| ProjectGraph context | $($Summary.contextCoverage.projectGraphCount) |"
+    $lines += "| Review memory signals | $($Summary.contextCoverage.reviewMemorySignalsCount) |"
+    $lines += "| Decision memory | $($Summary.contextCoverage.decisionMemoryCount) |"
+    $lines += ""
+    $observedSourceTypes = (As-Array $Summary.contextCoverage.observedSourceTypes) -join ", "
+    $lines += "- Observed context source types: $observedSourceTypes"
+    $lines += ""
+    $lines += "## Context Coverage By Case"
+    $lines += ""
+    $lines += "| Case | Rules | ProjectProfile | ProjectGraph | Review Memory | Decision Memory | Source Count | Tokens | Source Types |"
+    $lines += "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    foreach ($case in $Cases) {
+        $coverage = Get-ObjectPropertyValue -Object $case -Name "contextCoverage" -Default $null
+        $sourceTypes = (As-Array (Get-ObjectPropertyValue -Object $coverage -Name "sourceTypes" -Default @())) -join ", "
+        $lines += "| $($case.name) | $([bool](Get-ObjectPropertyValue -Object $coverage -Name "reviewRules" -Default $false)) | $([bool](Get-ObjectPropertyValue -Object $coverage -Name "projectProfile" -Default $false)) | $([bool](Get-ObjectPropertyValue -Object $coverage -Name "projectGraph" -Default $false)) | $([bool](Get-ObjectPropertyValue -Object $coverage -Name "reviewMemorySignals" -Default $false)) | $([bool](Get-ObjectPropertyValue -Object $coverage -Name "decisionMemory" -Default $false)) | $(Get-ObjectPropertyValue -Object $coverage -Name "sourceCount" -Default 0) | $(Get-ObjectPropertyValue -Object $coverage -Name "totalTokenEstimate" -Default 0) | $sourceTypes |"
+    }
     $lines += ""
     $lines += "## Case Matcher Diagnostics"
     $lines += ""
@@ -1371,6 +1576,7 @@ if (-not $health.Success) {
 Write-Host "Creating benchmark project at $ProjectRoot"
 Initialize-BenchmarkProject -Root $ProjectRoot -RunId $runId
 $project = New-BenchmarkProject -Root $ProjectRoot -RunId $runId
+Initialize-BenchmarkContextSources -Project $project
 
 $caseResults = @()
 foreach ($case in $cases) {
@@ -1407,5 +1613,6 @@ Write-Host "Semantic rescue count:     $($summary.completedSemanticRescueCount)"
 Write-Host "Semantic unexpected delta: $($summary.completedSemanticUnexpectedDelta)"
 Write-Host "Completed location:        $($summary.completedLocationAccuracy)"
 Write-Host "Completed events:          $($summary.completedEventCompleteness)"
+Write-Host "Context coverage rules/profile/graph: $($summary.contextCoverage.reviewRulesCount)/$($summary.contextCoverage.projectProfileCount)/$($summary.contextCoverage.projectGraphCount)"
 Write-Host "Markdown report:           $($report.markdownPath)"
 Write-Host "JSON report:               $($report.jsonPath)"
