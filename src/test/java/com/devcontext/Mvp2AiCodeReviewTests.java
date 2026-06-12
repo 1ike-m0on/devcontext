@@ -9,14 +9,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.devcontext.application.project.ProjectApplicationService;
 import com.devcontext.domain.llm.LlmRequest;
 import com.devcontext.domain.llm.LlmResponse;
+import com.devcontext.domain.profile.ProjectProfile;
+import com.devcontext.domain.profile.ProjectProfileFact;
+import com.devcontext.domain.profile.ProjectProfileSourceReference;
 import com.devcontext.domain.project.Project;
 import com.devcontext.ports.llm.LlmClient;
+import com.devcontext.ports.profile.ProjectProfileRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -57,6 +63,9 @@ class Mvp2AiCodeReviewTests {
 
     @Autowired
     private StubReviewLlmClient llmClient;
+
+    @Autowired
+    private ProjectProfileRepository profileRepository;
 
     @TempDir
     private Path projectRoot;
@@ -110,7 +119,8 @@ class Mvp2AiCodeReviewTests {
                 .contains("First decide whether the diff is a safe defensive change")
                 .contains("Use REVIEW_FEEDBACK_MEMORY signals to calibrate precision")
                 .contains("Do not repeat false_positive_pattern entries")
-                .contains("Return at most 4 issues");
+                .contains("Return at most 4 issues")
+                .doesNotContain("ProjectProfile facts for code review.");
 
         String detailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", reviewId))
                 .andExpect(status().isOk())
@@ -533,6 +543,59 @@ class Mvp2AiCodeReviewTests {
     }
 
     @Test
+    void injectsExistingProjectProfileFactsIntoReviewPrompt() throws Exception {
+        createReviewFixture(projectRoot);
+        Project project = projectService.createProject("profile-aware-review-project", projectRoot.toString(), "main");
+        Instant now = Instant.now();
+        profileRepository.upsertByProjectId(new ProjectProfile(
+                null,
+                project.id(),
+                "ready",
+                "ProjectProfile MVP for review context.",
+                List.of(
+                        profileFact("tech_stack", "Spring Boot", "Spring Boot 3.5 + Java 21",
+                                profileSource(".ai/code-map.json", "CODE_MAP", "code_structure", "derived")),
+                        profileFact("module", "review", "src/main/java/com/devcontext/application/review - AI code review workflow",
+                                profileSource(".ai/code-map.json", "CODE_MAP", "code_structure", "derived")),
+                        profileFact("endpoint", "POST /api/projects/{projectId}/reviews", "ReviewController#create",
+                                profileSource("src/main/java/com/devcontext/adapters/web/ReviewController.java", "API_CONTROLLER", "api_surface", "primary")),
+                        profileFact("evidence_coverage", "CACHE", "chunks=2; sourceId=5",
+                                profileSource("src/main/java/com/devcontext/adapters/cache/ReviewCache.java", "CACHE", "cache", "primary")),
+                        profileFact("context_asset", "BUSINESS_CONTEXT", ".ai/manual/business-context.md status=written",
+                                profileSource(".ai/manual/business-context.md", "MANUAL_DOC", "documentation", "secondary"))
+                ),
+                List.of(),
+                now,
+                now,
+                now
+        ));
+
+        mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "manual",
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/profile-context",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        String prompt = llmClient.lastRequest().get().prompt();
+        assertThat(prompt)
+                .contains("--- PROJECT_PROFILE_FACTS | ProjectProfile facts | priority=830 | source=project-profile:" + project.id() + " ---")
+                .contains("ProjectProfile facts for code review.")
+                .contains("ProjectProfile status=ready")
+                .contains("[tech_stack] Spring Boot = Spring Boot 3.5 + Java 21 | sourcePath=.ai/code-map.json evidenceType=CODE_MAP sourceKind=code_structure reliability=derived")
+                .contains("[module] review = src/main/java/com/devcontext/application/review - AI code review workflow")
+                .contains("[endpoint] POST /api/projects/{projectId}/reviews = ReviewController#create | sourcePath=src/main/java/com/devcontext/adapters/web/ReviewController.java evidenceType=API_CONTROLLER sourceKind=api_surface reliability=primary")
+                .contains("[evidence_coverage] CACHE = chunks=2; sourceId=5 | sourcePath=src/main/java/com/devcontext/adapters/cache/ReviewCache.java evidenceType=CACHE sourceKind=cache reliability=primary")
+                .doesNotContain("BUSINESS_CONTEXT");
+    }
+
+    @Test
     void acceptedReviewFeedbackBecomesConfirmedReviewMemorySignal() throws Exception {
         createReviewFixture(projectRoot);
         Project project = projectService.createProject("confirmed-feedback-review-project", projectRoot.toString(), "main");
@@ -767,6 +830,24 @@ class Mvp2AiCodeReviewTests {
             assertThat(input).as("test resource %s", resourcePath).isNotNull();
             return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    private ProjectProfileFact profileFact(
+            String factType,
+            String name,
+            String value,
+            ProjectProfileSourceReference source
+    ) {
+        return new ProjectProfileFact(factType, name, value, List.of(source));
+    }
+
+    private ProjectProfileSourceReference profileSource(
+            String sourcePath,
+            String evidenceType,
+            String sourceKind,
+            String sourceReliability
+    ) {
+        return new ProjectProfileSourceReference(sourcePath, evidenceType, sourceKind, sourceReliability);
     }
 
     private void createReviewFixture(Path root) throws IOException {
