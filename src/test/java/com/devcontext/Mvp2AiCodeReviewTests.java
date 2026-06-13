@@ -274,26 +274,32 @@ class Mvp2AiCodeReviewTests {
         long issueId = initialDetail.path("issues").get(0).path("id").asLong();
         assertOutcomeSummary(initialDetail, 1, 1, 0, 0, 0, 0, 0, 0, 0);
         assertOutcomeSummary(reviewEvents(reviewId), 1, 1, 0, 0, 0, 0, 0, 0, 0);
+        assertOutcomeSummary(reviewHistory(project.id()).get(0), 1, 1, 0, 0, 0, 0, 0, 0, 0);
 
         updateIssueStatus(issueId, "accepted");
         assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 1, 0, 0, 0, 0, 1, 0);
         assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 1, 0, 0, 0, 0, 1, 0);
+        assertOutcomeSummary(reviewHistory(project.id()).get(0), 1, 0, 1, 0, 0, 0, 0, 1, 0);
 
         updateIssueStatus(issueId, "fixed");
         assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 1, 0, 0, 0, 1, 0);
         assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 1, 0, 0, 0, 1, 0);
+        assertOutcomeSummary(reviewHistory(project.id()).get(0), 1, 0, 0, 1, 0, 0, 0, 1, 0);
 
         updateIssueStatus(issueId, "false_positive");
         assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 0, 1, 0, 0, 0, 1);
         assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 0, 1, 0, 0, 0, 1);
+        assertOutcomeSummary(reviewHistory(project.id()).get(0), 1, 0, 0, 0, 1, 0, 0, 0, 1);
 
         updateIssueStatus(issueId, "rejected");
         assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 0, 0, 1, 0, 0, 1);
         assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 0, 0, 1, 0, 0, 1);
+        assertOutcomeSummary(reviewHistory(project.id()).get(0), 1, 0, 0, 0, 0, 1, 0, 0, 1);
 
         updateIssueStatus(issueId, "ignored");
         assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 0, 0, 0, 1, 0, 1);
         assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 0, 0, 0, 1, 0, 1);
+        assertOutcomeSummary(reviewHistory(project.id()).get(0), 1, 0, 0, 0, 0, 0, 1, 0, 1);
     }
 
     @Test
@@ -1143,6 +1149,16 @@ class Mvp2AiCodeReviewTests {
 
     private JsonNode reviewEvents(long reviewId) throws Exception {
         String response = mockMvc.perform(get("/api/reviews/{reviewId}/events", reviewId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(response).path("data");
+    }
+
+    private JsonNode reviewHistory(long projectId) throws Exception {
+        String response = mockMvc.perform(get("/api/projects/{projectId}/reviews", projectId)
+                        .param("limit", "10"))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()

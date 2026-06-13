@@ -7,8 +7,8 @@ import com.devcontext.domain.git.GitReviewSource;
 import com.devcontext.domain.review.ReviewCreateResult;
 import com.devcontext.domain.review.ReviewDetail;
 import com.devcontext.domain.review.ReviewEventDetail;
+import com.devcontext.domain.review.ReviewHistoryItem;
 import com.devcontext.domain.review.ReviewIssue;
-import com.devcontext.domain.review.ReviewRecord;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -55,7 +55,7 @@ public class ReviewController {
     }
 
     @GetMapping("/api/projects/{projectId}/reviews")
-    public ApiResponse<List<ReviewRecord>> listProjectReviews(
+    public ApiResponse<List<ReviewHistoryItem>> listProjectReviews(
             @PathVariable Long projectId,
             @RequestParam(required = false) Integer limit
     ) {

@@ -23,6 +23,7 @@ import com.devcontext.domain.review.ReviewContextCoverage;
 import com.devcontext.domain.review.ReviewCreateResult;
 import com.devcontext.domain.review.ReviewDetail;
 import com.devcontext.domain.review.ReviewEventDetail;
+import com.devcontext.domain.review.ReviewHistoryItem;
 import com.devcontext.domain.review.ReviewIssue;
 import com.devcontext.domain.review.ReviewIssueDraft;
 import com.devcontext.domain.review.ReviewMemorySignal;
@@ -42,9 +43,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.HexFormat;
+import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -226,8 +229,19 @@ public class ReviewApplicationService {
         );
     }
 
-    public List<ReviewRecord> listProjectReviews(Long projectId, int limit) {
-        return reviewRecordRepository.findByProjectId(projectId, limit);
+    public List<ReviewHistoryItem> listProjectReviews(Long projectId, int limit) {
+        List<ReviewRecord> records = reviewRecordRepository.findByProjectId(projectId, limit);
+        List<Long> reviewIds = records.stream()
+                .map(ReviewRecord::id)
+                .toList();
+        Map<Long, List<ReviewIssue>> issuesByReviewId = reviewIssueRepository.findByReviewIds(reviewIds).stream()
+                .collect(Collectors.groupingBy(ReviewIssue::reviewId));
+        return records.stream()
+                .map(record -> ReviewHistoryItem.from(
+                        record,
+                        ReviewOutcomeSummary.from(issuesByReviewId.getOrDefault(record.id(), List.of()))
+                ))
+                .toList();
     }
 
     public ReviewEventDetail getReviewEvents(Long reviewId) {
