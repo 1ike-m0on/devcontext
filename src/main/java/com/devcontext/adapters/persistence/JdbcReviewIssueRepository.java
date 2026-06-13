@@ -5,6 +5,7 @@ import com.devcontext.ports.review.ReviewIssueRepository;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -86,6 +87,19 @@ public class JdbcReviewIssueRepository implements ReviewIssueRepository {
     @Override
     public List<ReviewIssue> findByReviewId(Long reviewId) {
         return jdbcTemplate.query("SELECT * FROM review_issue WHERE review_id = ? ORDER BY id ASC", rowMapper, reviewId);
+    }
+
+    @Override
+    public List<ReviewIssue> findByReviewIds(List<Long> reviewIds) {
+        if (reviewIds == null || reviewIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(", ", Collections.nCopies(reviewIds.size(), "?"));
+        return jdbcTemplate.query(
+                "SELECT * FROM review_issue WHERE review_id IN (" + placeholders + ") ORDER BY review_id ASC, id ASC",
+                rowMapper,
+                reviewIds.toArray()
+        );
     }
 
     @Override

@@ -11,6 +11,8 @@ public interface ReviewIssueRepository {
 
     List<ReviewIssue> findByReviewId(Long reviewId);
 
+    List<ReviewIssue> findByReviewIds(List<Long> reviewIds);
+
     Optional<ReviewIssue> findById(Long issueId);
 
     List<ReviewIssue> findRecentFeedbackByProjectId(Long projectId, int limit);

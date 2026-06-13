@@ -762,9 +762,20 @@ function ReviewWorkspace({
   const updateIssue = useMutation({
     mutationFn: ({ issueId, status }: { issueId: number; status: string }) => api.updateReviewIssue(issueId, { status }),
     onSuccess: (updated) => {
-      setDetail((current) =>
-        current ? withUpdatedReviewIssue(current, updated) : current,
-      );
+      const nextDetail = detail ? withUpdatedReviewIssue(detail, updated) : null;
+      if (nextDetail) {
+        setDetail(nextDetail);
+        if (project?.id) {
+          queryClient.setQueryData<ReviewRecord[]>(["project-reviews", project.id], (records) =>
+            records?.map((record) =>
+              record.id === nextDetail.review.id
+                ? { ...record, outcomeSummary: nextDetail.outcomeSummary }
+                : record,
+            ),
+          );
+          void queryClient.invalidateQueries({ queryKey: ["project-reviews", project.id] });
+        }
+      }
       onNotice("问题状态已更新。");
     },
     onError: (error) => onNotice(error instanceof Error ? error.message : "状态更新失败。"),
@@ -1157,6 +1168,8 @@ function reviewSourceIcon(sourceType: string): ReactNode {
 }
 
 function ReviewHistoryItem({ record, active, onOpen }: { record: ReviewRecord; active: boolean; onOpen: () => void }) {
+  const summary = record.outcomeSummary;
+
   return (
     <button
       type="button"
@@ -1178,8 +1191,31 @@ function ReviewHistoryItem({ record, active, onOpen }: { record: ReviewRecord; a
         {record.runId ? <Badge variant="secondary">Run #{record.runId}</Badge> : null}
         {typeof record.score === "number" ? <Badge variant="secondary">score {round(record.score)}</Badge> : null}
       </div>
+      {summary ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <ReviewHistoryOutcomeBadge label="pending" value={summary.pending} variant={summary.pending ? "warning" : "secondary"} />
+          <ReviewHistoryOutcomeBadge label="positive" value={summary.positiveOutcome} variant={summary.positiveOutcome ? "success" : "secondary"} />
+          <ReviewHistoryOutcomeBadge label="negative" value={summary.negativeOutcome} variant={summary.negativeOutcome ? "warning" : "secondary"} />
+        </div>
+      ) : null}
       {record.summary ? <p className="mt-2 line-clamp-2 text-sm leading-5 text-muted-foreground">{record.summary}</p> : null}
     </button>
+  );
+}
+
+function ReviewHistoryOutcomeBadge({
+  label,
+  value,
+  variant,
+}: {
+  label: string;
+  value: number;
+  variant: BadgeVariant;
+}) {
+  return (
+    <Badge variant={variant}>
+      {label} {value}
+    </Badge>
   );
 }
 

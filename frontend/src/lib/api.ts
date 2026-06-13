@@ -101,6 +101,7 @@ export type ReviewRecord = {
   summary?: string;
   reportPath?: string;
   createdAt?: string;
+  outcomeSummary?: ReviewOutcomeSummary;
 };
 
 export type ReviewMemorySignal = {
