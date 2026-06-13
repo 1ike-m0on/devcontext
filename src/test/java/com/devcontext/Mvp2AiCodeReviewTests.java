@@ -250,6 +250,53 @@ class Mvp2AiCodeReviewTests {
     }
 
     @Test
+    void derivesReviewOutcomeSummaryFromCurrentIssueStatuses() throws Exception {
+        createReviewFixture(projectRoot);
+        Project project = projectService.createProject("outcome-summary-review-project", projectRoot.toString(), "main");
+
+        String createResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/outcome-summary",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        long reviewId = objectMapper.readTree(createResponse).path("data").path("reviewId").asLong();
+        JsonNode initialDetail = reviewDetail(reviewId);
+        long issueId = initialDetail.path("issues").get(0).path("id").asLong();
+        assertOutcomeSummary(initialDetail, 1, 1, 0, 0, 0, 0, 0, 0, 0);
+        assertOutcomeSummary(reviewEvents(reviewId), 1, 1, 0, 0, 0, 0, 0, 0, 0);
+
+        updateIssueStatus(issueId, "accepted");
+        assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 1, 0, 0, 0, 0, 1, 0);
+        assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 1, 0, 0, 0, 0, 1, 0);
+
+        updateIssueStatus(issueId, "fixed");
+        assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 1, 0, 0, 0, 1, 0);
+        assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 1, 0, 0, 0, 1, 0);
+
+        updateIssueStatus(issueId, "false_positive");
+        assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 0, 1, 0, 0, 0, 1);
+        assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 0, 1, 0, 0, 0, 1);
+
+        updateIssueStatus(issueId, "rejected");
+        assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 0, 0, 1, 0, 0, 1);
+        assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 0, 0, 1, 0, 0, 1);
+
+        updateIssueStatus(issueId, "ignored");
+        assertOutcomeSummary(reviewDetail(reviewId), 1, 0, 0, 0, 0, 0, 1, 0, 1);
+        assertOutcomeSummary(reviewEvents(reviewId), 1, 0, 0, 0, 0, 0, 1, 0, 1);
+    }
+
+    @Test
     void addsFocusedTestGapGuardrailWhenModelOnlyReportsInputValidation() throws Exception {
         createReviewFixture(projectRoot);
         Project project = projectService.createProject("discount-review-project", projectRoot.toString(), "main");
@@ -1059,6 +1106,60 @@ class Mvp2AiCodeReviewTests {
         assertThat(createJson.path("contextCoverage").path("sourceTypes"))
                 .extracting(JsonNode::asText)
                 .contains(sourceTypes);
+    }
+
+    private void assertOutcomeSummary(
+            JsonNode responseData,
+            int total,
+            int pending,
+            int accepted,
+            int fixed,
+            int falsePositive,
+            int rejected,
+            int ignored,
+            int positiveOutcome,
+            int negativeOutcome
+    ) {
+        JsonNode summary = responseData.path("outcomeSummary");
+        assertThat(summary.path("total").asInt()).isEqualTo(total);
+        assertThat(summary.path("pending").asInt()).isEqualTo(pending);
+        assertThat(summary.path("accepted").asInt()).isEqualTo(accepted);
+        assertThat(summary.path("fixed").asInt()).isEqualTo(fixed);
+        assertThat(summary.path("falsePositive").asInt()).isEqualTo(falsePositive);
+        assertThat(summary.path("rejected").asInt()).isEqualTo(rejected);
+        assertThat(summary.path("ignored").asInt()).isEqualTo(ignored);
+        assertThat(summary.path("positiveOutcome").asInt()).isEqualTo(positiveOutcome);
+        assertThat(summary.path("negativeOutcome").asInt()).isEqualTo(negativeOutcome);
+    }
+
+    private JsonNode reviewDetail(long reviewId) throws Exception {
+        String response = mockMvc.perform(get("/api/reviews/{reviewId}", reviewId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(response).path("data");
+    }
+
+    private JsonNode reviewEvents(long reviewId) throws Exception {
+        String response = mockMvc.perform(get("/api/reviews/{reviewId}/events", reviewId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(response).path("data");
+    }
+
+    private void updateIssueStatus(long issueId, String status) throws Exception {
+        mockMvc.perform(patch("/api/review-issues/{issueId}", issueId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "%s",
+                                  "note": "Outcome summary test."
+                                }
+                                """.formatted(status)))
+                .andExpect(status().isOk());
     }
 
     private void assertReviewContextCoverageEvent(long reviewId, String... outputSnippets) throws Exception {
