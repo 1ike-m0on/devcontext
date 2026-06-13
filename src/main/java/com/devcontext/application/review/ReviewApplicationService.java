@@ -27,6 +27,7 @@ import com.devcontext.domain.review.ReviewIssue;
 import com.devcontext.domain.review.ReviewIssueDraft;
 import com.devcontext.domain.review.ReviewMemorySignal;
 import com.devcontext.domain.review.ReviewMemorySignalType;
+import com.devcontext.domain.review.ReviewOutcomeSummary;
 import com.devcontext.domain.review.ReviewRecord;
 import com.devcontext.domain.run.AgentRun;
 import com.devcontext.ports.git.GitDiffProvider;
@@ -232,11 +233,13 @@ public class ReviewApplicationService {
     public ReviewEventDetail getReviewEvents(Long reviewId) {
         ReviewRecord record = reviewRecordRepository.findById(reviewId)
                 .orElseThrow(() -> new ApiException("REVIEW_NOT_FOUND", "Review not found", HttpStatus.NOT_FOUND));
+        List<ReviewIssue> issues = reviewIssueRepository.findByReviewId(reviewId);
         return new ReviewEventDetail(
                 record.id(),
                 record.runId(),
                 runService.listEvents(record.runId()),
-                reviewMemorySignalsFor(record)
+                reviewMemorySignalsFor(record),
+                ReviewOutcomeSummary.from(issues)
         );
     }
 
