@@ -180,7 +180,7 @@ class Mvp2AiCodeReviewTests {
         JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
         JsonNode eventMemorySignals = objectMapper.readTree(eventsResponse).path("data").path("reviewMemorySignals");
         assertThat(eventMemorySignals).isEmpty();
-        assertThat(events).hasSize(12);
+        assertThat(events).hasSize(13);
         assertThat(events)
                 .extracting(event -> event.path("eventType").asText())
                 .containsExactly(
@@ -188,6 +188,7 @@ class Mvp2AiCodeReviewTests {
                         "GIT_DIFF_COLLECTED",
                         "PROJECT_CONTEXT_LOADED",
                         "DECISION_MEMORY_RECALLED",
+                        "REVIEW_CONTEXT_COVERAGE_RECORDED",
                         "PROMPT_BUILT",
                         "LLM_CALL_STARTED",
                         "LLM_CALLED",
@@ -201,8 +202,21 @@ class Mvp2AiCodeReviewTests {
                 .filteredOn(event -> "LLM_CALLED".equals(event.path("eventType").asText()))
                 .first()
                 .satisfies(event -> assertThat(event.path("inputSummary").asText()).isEqualTo("test/mock-llm"));
-        assertThat(events.get(11).path("inputSummary").asText()).contains("pending -> accepted");
-        assertThat(events.get(11).path("outputSummary").asText()).contains("Valid issue for MVP2 test.");
+        assertThat(events)
+                .filteredOn(event -> "REVIEW_CONTEXT_COVERAGE_RECORDED".equals(event.path("eventType").asText()))
+                .first()
+                .satisfies(event -> assertThat(event.path("outputSummary").asText())
+                        .contains("sourceCount=")
+                        .contains("totalTokenEstimate=")
+                        .contains("sourceTypes=")
+                        .contains("REVIEW_RULES")
+                        .contains("reviewRules=true")
+                        .contains("projectProfile=false")
+                        .contains("projectGraph=false")
+                        .contains("reviewMemorySignals=false")
+                        .contains("decisionMemory=false"));
+        assertThat(events.get(12).path("inputSummary").asText()).contains("pending -> accepted");
+        assertThat(events.get(12).path("outputSummary").asText()).contains("Valid issue for MVP2 test.");
 
         String observationResponse = mockMvc.perform(get("/api/observations")
                         .param("reviewId", String.valueOf(reviewId)))
@@ -599,8 +613,20 @@ class Mvp2AiCodeReviewTests {
                 .getContentAsString();
 
         JsonNode createJson = objectMapper.readTree(createResponse).path("data");
+        long reviewId = createJson.path("reviewId").asLong();
         assertContextCoverage(createJson, true, true, false, false, false);
         assertContextSourceTypes(createJson, "PROJECT_PROFILE_FACTS");
+        assertReviewContextCoverageEvent(
+                reviewId,
+                "sourceCount=",
+                "totalTokenEstimate=",
+                "PROJECT_PROFILE_FACTS",
+                "reviewRules=true",
+                "projectProfile=true",
+                "projectGraph=false",
+                "reviewMemorySignals=false",
+                "decisionMemory=false"
+        );
 
         String prompt = llmClient.lastRequest().get().prompt();
         assertThat(prompt)
@@ -676,8 +702,20 @@ class Mvp2AiCodeReviewTests {
                 .getContentAsString();
 
         JsonNode createJson = objectMapper.readTree(createResponse).path("data");
+        long reviewId = createJson.path("reviewId").asLong();
         assertContextCoverage(createJson, true, false, true, false, false);
         assertContextSourceTypes(createJson, "PROJECT_GRAPH_NEIGHBORS");
+        assertReviewContextCoverageEvent(
+                reviewId,
+                "sourceCount=",
+                "totalTokenEstimate=",
+                "PROJECT_GRAPH_NEIGHBORS",
+                "reviewRules=true",
+                "projectProfile=false",
+                "projectGraph=true",
+                "reviewMemorySignals=false",
+                "decisionMemory=false"
+        );
 
         String prompt = llmClient.lastRequest().get().prompt();
         assertThat(prompt)
@@ -1021,6 +1059,26 @@ class Mvp2AiCodeReviewTests {
         assertThat(createJson.path("contextCoverage").path("sourceTypes"))
                 .extracting(JsonNode::asText)
                 .contains(sourceTypes);
+    }
+
+    private void assertReviewContextCoverageEvent(long reviewId, String... outputSnippets) throws Exception {
+        String eventsResponse = mockMvc.perform(get("/api/reviews/{reviewId}/events", reviewId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
+        assertThat(events)
+                .filteredOn(event -> "REVIEW_CONTEXT_COVERAGE_RECORDED".equals(event.path("eventType").asText()))
+                .first()
+                .satisfies(event -> {
+                    assertThat(event.path("inputSummary").asText()).isEqualTo("review context coverage");
+                    String outputSummary = event.path("outputSummary").asText();
+                    for (String snippet : outputSnippets) {
+                        assertThat(outputSummary).contains(snippet);
+                    }
+                });
     }
 
     private void createReviewFixture(Path root) throws IOException {

@@ -140,6 +140,16 @@ public class ReviewApplicationService {
             contextItems = contextItems.stream()
                     .sorted(Comparator.comparingInt(ContextItem::priority).reversed())
                     .toList();
+            ReviewContextCoverage contextCoverage = ReviewContextCoverage.from(contextItems);
+            runService.recordEvent(
+                    run.id(),
+                    "REVIEW_CONTEXT_COVERAGE_RECORDED",
+                    "review context coverage",
+                    reviewContextCoverageSummary(contextCoverage),
+                    "success",
+                    null,
+                    null
+            );
 
             String prompt = promptBuilder.build(project, diff, contextItems, command.mode());
             runService.recordEvent(run.id(), "PROMPT_BUILT", "review prompt", prompt.length() + " chars", "success", null, null);
@@ -192,7 +202,7 @@ public class ReviewApplicationService {
                     updated.reportPath(),
                     diff.truncated(),
                     reviewMemorySignals,
-                    ReviewContextCoverage.from(contextItems)
+                    contextCoverage
             );
         } catch (RuntimeException e) {
             runService.failRun(run, e.getMessage());
@@ -412,6 +422,17 @@ public class ReviewApplicationService {
             return summary + ", " + processedReport.feedbackDowngradedIssueCount() + " by prior feedback";
         }
         return summary;
+    }
+
+    private String reviewContextCoverageSummary(ReviewContextCoverage coverage) {
+        return "sourceCount=" + coverage.sourceCount()
+                + "; totalTokenEstimate=" + coverage.totalTokenEstimate()
+                + "; sourceTypes=" + coverage.sourceTypes()
+                + "; reviewRules=" + coverage.reviewRules()
+                + "; projectProfile=" + coverage.projectProfile()
+                + "; projectGraph=" + coverage.projectGraph()
+                + "; reviewMemorySignals=" + coverage.reviewMemorySignals()
+                + "; decisionMemory=" + coverage.decisionMemory();
     }
 
     private void appendLine(StringBuilder builder, String label, String value) {
