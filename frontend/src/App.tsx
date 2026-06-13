@@ -51,6 +51,7 @@ import {
   ReviewDetail,
   ReviewIssue,
   ReviewMemorySignal,
+  ReviewOutcomeSummary,
   ReviewRecord,
 } from "@/lib/api";
 import { asNumberOrNull, cn, splitTags } from "@/lib/utils";
@@ -762,12 +763,7 @@ function ReviewWorkspace({
     mutationFn: ({ issueId, status }: { issueId: number; status: string }) => api.updateReviewIssue(issueId, { status }),
     onSuccess: (updated) => {
       setDetail((current) =>
-        current
-          ? {
-              ...current,
-              issues: current.issues.map((issue) => (issue.id === updated.id ? updated : issue)),
-            }
-          : current,
+        current ? withUpdatedReviewIssue(current, updated) : current,
       );
       onNotice("问题状态已更新。");
     },
@@ -1198,6 +1194,7 @@ function ReviewResultPanel({
 }) {
   const criticalCount = detail?.issues.filter((issue) => issue.severity === "critical").length ?? 0;
   const warningCount = detail?.issues.filter((issue) => issue.severity === "warning").length ?? 0;
+  const outcomeSummary = detail ? reviewOutcomeSummary(detail) : null;
 
   return (
     <Card className="min-w-0 overflow-hidden">
@@ -1232,6 +1229,7 @@ function ReviewResultPanel({
                 <StateLine label="Run ID" value={String(detail.review.runId ?? "-")} />
               </div>
             </div>
+            {outcomeSummary ? <ReviewOutcomeSummaryPanel summary={outcomeSummary} /> : null}
             <ReviewMemorySignalsPanel signals={detail.reviewMemorySignals} />
             {detail.issues.length === 0 ? (
               <EmptyState text="这次审查没有解析出问题。" />
@@ -1246,6 +1244,54 @@ function ReviewResultPanel({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ReviewOutcomeSummaryPanel({ summary }: { summary: ReviewOutcomeSummary }) {
+  const metrics: Array<{ label: keyof ReviewOutcomeSummary; value: number; tone: "good" | "warn" | "bad" | "neutral" }> = [
+    { label: "total", value: summary.total, tone: "neutral" },
+    { label: "pending", value: summary.pending, tone: summary.pending ? "warn" : "neutral" },
+    { label: "accepted", value: summary.accepted, tone: summary.accepted ? "good" : "neutral" },
+    { label: "fixed", value: summary.fixed, tone: summary.fixed ? "good" : "neutral" },
+    { label: "falsePositive", value: summary.falsePositive, tone: summary.falsePositive ? "warn" : "neutral" },
+    { label: "rejected", value: summary.rejected, tone: summary.rejected ? "warn" : "neutral" },
+    { label: "ignored", value: summary.ignored, tone: summary.ignored ? "warn" : "neutral" },
+    { label: "positiveOutcome", value: summary.positiveOutcome, tone: summary.positiveOutcome ? "good" : "neutral" },
+    { label: "negativeOutcome", value: summary.negativeOutcome, tone: summary.negativeOutcome ? "warn" : "neutral" },
+  ];
+
+  return (
+    <section className="min-w-0 rounded-md border border-border bg-background p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">质量结果摘要</div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">基于当前 ReviewIssue 状态实时计算，反馈后会随问题状态更新。</p>
+        </div>
+        <Badge variant={summary.pending ? "warning" : "secondary"}>{summary.pending} pending</Badge>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 2xl:grid-cols-5">
+        {metrics.map((metric) => (
+          <ReviewOutcomeMetric key={metric.label} label={metric.label} value={metric.value} tone={metric.tone} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReviewOutcomeMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "good" | "warn" | "bad" | "neutral";
+}) {
+  return (
+    <div className={cn("min-w-0 rounded-md border px-2.5 py-2", outcomeMetricToneClass(tone))}>
+      <div className="break-words text-[11px] leading-4 text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
+    </div>
   );
 }
 
@@ -2539,6 +2585,46 @@ function StateLine({ label, value }: { label: string; value: string }) {
 
 type BadgeVariant = "default" | "secondary" | "success" | "warning" | "danger";
 
+function withUpdatedReviewIssue(detail: ReviewDetail, updated: ReviewIssue): ReviewDetail {
+  const issues = detail.issues.map((issue) => (issue.id === updated.id ? updated : issue));
+  return {
+    ...detail,
+    issues,
+    outcomeSummary: deriveReviewOutcomeSummary(issues),
+  };
+}
+
+function reviewOutcomeSummary(detail: ReviewDetail): ReviewOutcomeSummary {
+  return detail.outcomeSummary ?? deriveReviewOutcomeSummary(detail.issues);
+}
+
+function deriveReviewOutcomeSummary(issues: ReviewIssue[]): ReviewOutcomeSummary {
+  const summary: ReviewOutcomeSummary = {
+    total: issues.length,
+    pending: 0,
+    accepted: 0,
+    fixed: 0,
+    falsePositive: 0,
+    rejected: 0,
+    ignored: 0,
+    positiveOutcome: 0,
+    negativeOutcome: 0,
+  };
+
+  for (const issue of issues) {
+    const status = (issue.status ?? "pending").trim().toLowerCase();
+    if (status === "pending") summary.pending += 1;
+    if (status === "accepted") summary.accepted += 1;
+    if (status === "fixed") summary.fixed += 1;
+    if (status === "false_positive") summary.falsePositive += 1;
+    if (status === "rejected") summary.rejected += 1;
+    if (status === "ignored") summary.ignored += 1;
+  }
+  summary.positiveOutcome = summary.accepted + summary.fixed;
+  summary.negativeOutcome = summary.falsePositive + summary.rejected + summary.ignored;
+  return summary;
+}
+
 function qualityTone(level?: string): "good" | "warn" | "bad" | "neutral" {
   if (level === "high") return "good";
   if (level === "medium") return "warn";
@@ -2635,6 +2721,13 @@ function statusBadge(status?: string) {
 function reviewSignalToneClass(tone: "confirmed" | "suppressed" | "neutral") {
   if (tone === "confirmed") return "border-emerald-400/20 bg-emerald-400/5";
   if (tone === "suppressed") return "border-amber-400/20 bg-amber-400/5";
+  return "border-border bg-muted/20";
+}
+
+function outcomeMetricToneClass(tone: "good" | "warn" | "bad" | "neutral") {
+  if (tone === "good") return "border-emerald-400/20 bg-emerald-400/5";
+  if (tone === "warn") return "border-amber-400/20 bg-amber-400/5";
+  if (tone === "bad") return "border-red-400/20 bg-red-400/5";
   return "border-border bg-muted/20";
 }
 
