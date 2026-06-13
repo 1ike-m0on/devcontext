@@ -79,6 +79,249 @@ function As-Array {
     return @($Value)
 }
 
+function New-BuiltInCodeReviewBenchmarkCases {
+    return [pscustomobject]@{
+        cases = @(
+            [pscustomobject]@{
+                name = "builtin-no-issue-safe-refactor"
+                category = "no_issue"
+                split = "dev"
+                diffPath = "builtin/no-issue-safe-refactor.diff"
+                expectedIssues = @()
+                allowedExtraIssues = @()
+            },
+            [pscustomobject]@{
+                name = "builtin-null-handling"
+                category = "null_handling"
+                split = "dev"
+                diffPath = "builtin/null-handling.diff"
+                expectedIssues = @(
+                    [pscustomobject]@{
+                        category = "null_handling"
+                        severity = "critical"
+                        filePath = "src/main/java/com/acme/UserService.java"
+                        lineHint = 7
+                        semanticAnchors = @(
+                            @("null", "nullable")
+                            @("dereference", "getName")
+                            @("findById", "repository")
+                        )
+                        titleAnchors = @("null", "dereference")
+                        keywords = @("repository", "getName")
+                    }
+                )
+                allowedExtraIssues = @()
+            },
+            [pscustomobject]@{
+                name = "builtin-authorization-delete"
+                category = "authorization_security"
+                split = "dev"
+                diffPath = "builtin/authorization-delete.diff"
+                expectedIssues = @(
+                    [pscustomobject]@{
+                        category = "authorization_security"
+                        severity = "critical"
+                        filePath = "src/main/java/com/acme/ProjectController.java"
+                        lineHint = 6
+                        semanticAnchors = @(
+                            @("authorization", "authorize", "ownership")
+                            @("delete", "destructive")
+                        )
+                        titleAnchors = @("authorization", "delete")
+                        keywords = @("project", "delete")
+                    }
+                )
+                allowedExtraIssues = @()
+            },
+            [pscustomobject]@{
+                name = "builtin-path-traversal"
+                category = "input_validation"
+                split = "dev"
+                diffPath = "builtin/path-traversal.diff"
+                expectedIssues = @(
+                    [pscustomobject]@{
+                        category = "input_validation"
+                        severity = "critical"
+                        filePath = "src/main/java/com/acme/FileController.java"
+                        lineHint = 7
+                        semanticAnchors = @(
+                            @("path traversal", "traversal", "normalize")
+                            @("user-controlled", "filename", "path")
+                        )
+                        titleAnchors = @("path", "traversal")
+                        keywords = @("Files.readString", "fileName")
+                    }
+                )
+                allowedExtraIssues = @()
+            },
+            [pscustomobject]@{
+                name = "builtin-idempotency-retry"
+                category = "idempotency_retry"
+                split = "dev"
+                diffPath = "builtin/idempotency-retry.diff"
+                expectedIssues = @(
+                    [pscustomobject]@{
+                        category = "idempotency_retry"
+                        severity = "warning"
+                        filePath = "src/main/java/com/acme/PaymentWebhookHandler.java"
+                        lineHint = 7
+                        semanticAnchors = @(
+                            @("idempotent", "idempotency", "deduplicate")
+                            @("retry", "redelivery", "webhook")
+                        )
+                        titleAnchors = @("idempot", "retry")
+                        keywords = @("eventId", "save")
+                    }
+                )
+                allowedExtraIssues = @()
+            },
+            [pscustomobject]@{
+                name = "builtin-missing-tests"
+                category = "missing_tests"
+                split = "dev"
+                diffPath = "builtin/missing-tests.diff"
+                expectedIssues = @(
+                    [pscustomobject]@{
+                        category = "missing_tests"
+                        severity = "warning"
+                        filePath = "src/main/java/com/acme/DiscountService.java"
+                        lineHint = 6
+                        lineRequired = $false
+                        semanticAnchors = @(
+                            @("test", "tests", "coverage")
+                            @("discount", "business rule", "boundary")
+                        )
+                        titleAnchors = @("test", "coverage")
+                        keywords = @("discount")
+                    }
+                )
+                allowedExtraIssues = @()
+            }
+        )
+    }
+}
+
+function Get-BuiltInCodeReviewBenchmarkFixtures {
+    return @(
+        [pscustomobject]@{
+            path = "builtin/no-issue-safe-refactor.diff"
+            content = @'
+diff --git a/src/main/java/com/acme/UserService.java b/src/main/java/com/acme/UserService.java
+--- a/src/main/java/com/acme/UserService.java
++++ b/src/main/java/com/acme/UserService.java
+@@ -2,7 +2,8 @@ package com.acme;
+
+ class UserService {
+     String userName(Long id) {
+-        return "benchmark";
++        String fallback = "benchmark";
++        return fallback;
+     }
+ }
+'@
+        },
+        [pscustomobject]@{
+            path = "builtin/null-handling.diff"
+            content = @'
+diff --git a/src/main/java/com/acme/UserService.java b/src/main/java/com/acme/UserService.java
+--- a/src/main/java/com/acme/UserService.java
++++ b/src/main/java/com/acme/UserService.java
+@@ -2,6 +2,8 @@ package com.acme;
+
+ class UserService {
+     String userName(Long id) {
++        User user = userRepository.findById(id);
++        return user.getName();
+         return "benchmark";
+     }
+ }
+'@
+        },
+        [pscustomobject]@{
+            path = "builtin/authorization-delete.diff"
+            content = @'
+diff --git a/src/main/java/com/acme/ProjectController.java b/src/main/java/com/acme/ProjectController.java
+--- a/src/main/java/com/acme/ProjectController.java
++++ b/src/main/java/com/acme/ProjectController.java
+@@ -1,5 +1,8 @@
+ package com.acme;
+
+ class ProjectController {
++    @DeleteMapping("/api/projects/{projectId}")
++    void deleteProject(Long projectId) {
++        projectService.delete(projectId);
++    }
+ }
+'@
+        },
+        [pscustomobject]@{
+            path = "builtin/path-traversal.diff"
+            content = @'
+diff --git a/src/main/java/com/acme/FileController.java b/src/main/java/com/acme/FileController.java
+--- a/src/main/java/com/acme/FileController.java
++++ b/src/main/java/com/acme/FileController.java
+@@ -1,5 +1,9 @@
+ package com.acme;
+
+ class FileController {
++    String read(String fileName) throws Exception {
++        Path target = Path.of(baseDir, fileName);
++        return Files.readString(target);
++    }
+ }
+'@
+        },
+        [pscustomobject]@{
+            path = "builtin/idempotency-retry.diff"
+            content = @'
+diff --git a/src/main/java/com/acme/PaymentWebhookHandler.java b/src/main/java/com/acme/PaymentWebhookHandler.java
+--- a/src/main/java/com/acme/PaymentWebhookHandler.java
++++ b/src/main/java/com/acme/PaymentWebhookHandler.java
+@@ -1,5 +1,9 @@
+ package com.acme;
+
+ class PaymentWebhookHandler {
++    void handle(WebhookEvent event) {
++        paymentProcessor.capture(event);
++        paymentRepository.save(new Payment(event.eventId()));
++    }
+ }
+'@
+        },
+        [pscustomobject]@{
+            path = "builtin/missing-tests.diff"
+            content = @'
+diff --git a/src/main/java/com/acme/DiscountService.java b/src/main/java/com/acme/DiscountService.java
+--- a/src/main/java/com/acme/DiscountService.java
++++ b/src/main/java/com/acme/DiscountService.java
+@@ -1,7 +1,7 @@
+ package com.acme;
+
+ class DiscountService {
+     int discountPercent(Customer customer) {
+-        return customer.isVip() ? 10 : 0;
++        return customer.isVip() ? 25 : 5;
+     }
+ }
+'@
+        }
+    )
+}
+
+function Write-BuiltInCodeReviewBenchmarkFixtures {
+    param([string]$Root)
+    New-Item -ItemType Directory -Path $Root -Force | Out-Null
+    foreach ($fixture in Get-BuiltInCodeReviewBenchmarkFixtures) {
+        $target = Join-Path $Root $fixture.path
+        $targetDir = Split-Path -Parent $target
+        if (-not (Test-Path -LiteralPath $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+        Set-Content -Encoding UTF8 -LiteralPath $target -Value $fixture.content
+    }
+    return $Root
+}
+
 function Get-ObjectPropertyValue {
     param(
         [object]$Object,
@@ -1322,7 +1565,10 @@ function Write-Reports {
         [object]$Summary,
         [object[]]$Cases,
         [object]$LlmMetadata,
-        [string]$OutputDir
+        [string]$OutputDir,
+        [string]$CasesSource,
+        [string]$ResolvedCasesPath,
+        [string]$FixturesRoot
     )
     if (-not (Test-Path -LiteralPath $OutputDir)) {
         New-Item -ItemType Directory -Path $OutputDir | Out-Null
@@ -1332,7 +1578,10 @@ function Write-Reports {
     $payload = [pscustomobject]@{
         runId = $RunId
         baseUrl = $BaseUrl
+        casesSource = $CasesSource
         casesPath = $CasesPath
+        resolvedCasesPath = $ResolvedCasesPath
+        fixturesRoot = $FixturesRoot
         split = $Split
         project = $Project
         mode = $Mode
@@ -1351,7 +1600,10 @@ function Write-Reports {
     $lines += "## Environment"
     $lines += ""
     $lines += "- Base URL: ``$BaseUrl``"
+    $lines += "- Cases source: ``$CasesSource``"
     $lines += "- Cases: ``$CasesPath``"
+    $lines += "- Resolved cases path: ``$ResolvedCasesPath``"
+    $lines += "- Fixtures root: ``$FixturesRoot``"
     $lines += "- Split: ``$Split``"
     $lines += "- Project ID: ``$($Project.id)``"
     $lines += "- Project root: ``$($Project.rootPath)``"
@@ -1531,13 +1783,23 @@ function Write-Reports {
 
 $runId = New-RunId
 $resolvedCasesPath = Resolve-WorkspacePath $CasesPath
-$casesDir = Split-Path -Parent $resolvedCasesPath
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = Join-Path (Get-Location) "target/code-review-benchmark-$runId"
 }
 
-Write-Host "Loading benchmark cases from $resolvedCasesPath"
-$caseDocument = Get-Content -Raw -Encoding UTF8 -LiteralPath $resolvedCasesPath | ConvertFrom-Json
+$usingBuiltInCases = -not (Test-Path -LiteralPath $resolvedCasesPath)
+if ($usingBuiltInCases) {
+    $casesDir = Write-BuiltInCodeReviewBenchmarkFixtures -Root (Join-Path (Get-Location) "target/code-review-benchmark-built-in-$runId-$PID")
+    $casesSource = "built-in"
+    Write-Host "Benchmark cases file not found at $resolvedCasesPath"
+    Write-Host "Using built-in CodeReview benchmark cases with fixtures at $casesDir"
+    $caseDocument = New-BuiltInCodeReviewBenchmarkCases
+} else {
+    $casesDir = Split-Path -Parent $resolvedCasesPath
+    $casesSource = "file"
+    Write-Host "Loading benchmark cases from $resolvedCasesPath"
+    $caseDocument = Get-Content -Raw -Encoding UTF8 -LiteralPath $resolvedCasesPath | ConvertFrom-Json
+}
 $cases = @(As-Array $caseDocument.cases)
 if ($cases.Count -eq 0) {
     throw "Benchmark cases are empty"
@@ -1559,6 +1821,9 @@ if ($CaseLimit -gt 0) {
 }
 Write-Host "Selected $($cases.Count) benchmark case(s)"
 if ($ListCases) {
+    Write-Host "Case source: $casesSource"
+    Write-Host "Cases path: $resolvedCasesPath"
+    Write-Host "Fixtures root: $casesDir"
     foreach ($case in $cases) {
         $expectedCount = @(As-Array $case.expectedIssues).Count
         $allowedCount = @(As-Array $case.allowedExtraIssues).Count
@@ -1591,7 +1856,7 @@ foreach ($case in $cases) {
 }
 
 $summary = Summarize-Results -Cases $caseResults
-$report = Write-Reports -RunId $runId -Project $project -Summary $summary -Cases $caseResults -LlmMetadata (Get-LlmReportMetadata) -OutputDir $OutputDir
+$report = Write-Reports -RunId $runId -Project $project -Summary $summary -Cases $caseResults -LlmMetadata (Get-LlmReportMetadata) -OutputDir $OutputDir -CasesSource $casesSource -ResolvedCasesPath $resolvedCasesPath -FixturesRoot $casesDir
 
 Write-Host ""
 Write-Host "CodeReview benchmark complete"
