@@ -119,6 +119,18 @@ export type ReviewMemorySignal = {
   updatedAt?: string | null;
 };
 
+export type ReviewOutcomeSummary = {
+  total: number;
+  pending: number;
+  accepted: number;
+  fixed: number;
+  falsePositive: number;
+  rejected: number;
+  ignored: number;
+  positiveOutcome: number;
+  negativeOutcome: number;
+};
+
 export type ReviewCreateResult = {
   reviewId: number;
   runId?: number;
@@ -150,6 +162,7 @@ export type ReviewDetail = {
   review: ReviewRecord & { status?: string };
   issues: ReviewIssue[];
   reviewMemorySignals?: ReviewMemorySignal[];
+  outcomeSummary?: ReviewOutcomeSummary;
 };
 
 export type ContextDocumentStatus = {
