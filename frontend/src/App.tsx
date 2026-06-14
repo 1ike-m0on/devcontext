@@ -760,7 +760,8 @@ function ReviewWorkspace({
   });
 
   const updateIssue = useMutation({
-    mutationFn: ({ issueId, status }: { issueId: number; status: string }) => api.updateReviewIssue(issueId, { status }),
+    mutationFn: ({ issueId, status, note }: { issueId: number; status: string; note?: string | null }) =>
+      api.updateReviewIssue(issueId, { status, note }),
     onSuccess: (updated) => {
       const nextDetail = detail ? withUpdatedReviewIssue(detail, updated) : null;
       if (nextDetail) {
@@ -934,7 +935,11 @@ function ReviewWorkspace({
       </section>
 
       <section className="grid min-w-0 gap-5 overflow-hidden">
-        <ReviewResultPanel detail={detail} onOpenRun={onOpenRun} onUpdateIssue={(issueId, status) => updateIssue.mutate({ issueId, status })} />
+        <ReviewResultPanel
+          detail={detail}
+          onOpenRun={onOpenRun}
+          onUpdateIssue={(issueId, status, note) => updateIssue.mutate({ issueId, status, note })}
+        />
         <Card className="min-w-0 overflow-hidden">
           <CardHeader>
             <CardTitle>结果处理</CardTitle>
@@ -1226,7 +1231,7 @@ function ReviewResultPanel({
 }: {
   detail: ReviewDetail | null;
   onOpenRun: (runId: number) => void;
-  onUpdateIssue: (issueId: number, status: string) => void;
+  onUpdateIssue: (issueId: number, status: string, note?: string | null) => void;
 }) {
   const criticalCount = detail?.issues.filter((issue) => issue.severity === "critical").length ?? 0;
   const warningCount = detail?.issues.filter((issue) => issue.severity === "warning").length ?? 0;
@@ -1422,7 +1427,23 @@ function ReviewMemorySignalItem({ signal }: { signal: ReviewMemorySignal }) {
   );
 }
 
-function ReviewIssueCard({ issue, onUpdateStatus }: { issue: ReviewIssue; onUpdateStatus: (issueId: number, status: string) => void }) {
+function ReviewIssueCard({
+  issue,
+  onUpdateStatus,
+}: {
+  issue: ReviewIssue;
+  onUpdateStatus: (issueId: number, status: string, note?: string | null) => void;
+}) {
+  const [note, setNote] = useState(issue.note ?? "");
+
+  useEffect(() => {
+    setNote(issue.note ?? "");
+  }, [issue.id, issue.note]);
+
+  function saveStatus(status: string) {
+    onUpdateStatus(issue.id, status, note.trim() || null);
+  }
+
   return (
     <article className="min-w-0 overflow-hidden rounded-lg border border-border bg-background p-4">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1439,11 +1460,20 @@ function ReviewIssueCard({ issue, onUpdateStatus }: { issue: ReviewIssue; onUpda
         <TextBlock title="建议" text={issue.suggestion || "暂无建议。"} />
       </div>
       {issue.impact ? <TextBlock className="mt-4" title="影响" text={issue.impact} /> : null}
+      <Label className="mt-4 block">
+        反馈备注
+        <Textarea
+          className="mt-2 min-h-20 resize-y"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="补充采纳、误报、已修复或拒绝的原因"
+        />
+      </Label>
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" onClick={() => onUpdateStatus(issue.id, "accepted")}>采纳</Button>
-        <Button size="sm" variant="secondary" onClick={() => onUpdateStatus(issue.id, "false_positive")}>误报</Button>
-        <Button size="sm" variant="secondary" onClick={() => onUpdateStatus(issue.id, "fixed")}>已修复</Button>
-        <Button size="sm" variant="ghost" onClick={() => onUpdateStatus(issue.id, "rejected")}>拒绝</Button>
+        <Button size="sm" variant="secondary" onClick={() => saveStatus("accepted")}>采纳</Button>
+        <Button size="sm" variant="secondary" onClick={() => saveStatus("false_positive")}>误报</Button>
+        <Button size="sm" variant="secondary" onClick={() => saveStatus("fixed")}>已修复</Button>
+        <Button size="sm" variant="ghost" onClick={() => saveStatus("rejected")}>拒绝</Button>
       </div>
     </article>
   );
