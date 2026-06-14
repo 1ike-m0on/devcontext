@@ -787,6 +787,7 @@ class Mvp2AiCodeReviewTests {
     void acceptedReviewFeedbackBecomesConfirmedReviewMemorySignal() throws Exception {
         createReviewFixture(projectRoot);
         Project project = projectService.createProject("confirmed-feedback-review-project", projectRoot.toString(), "main");
+        String feedbackNote = "Confirmed nullable repository lookup pattern for this project.";
 
         String firstCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -817,9 +818,9 @@ class Mvp2AiCodeReviewTests {
                         .content("""
                                 {
                                   "status": "accepted",
-                                  "note": "Confirmed nullable repository lookup pattern for this project."
+                                  "note": "%s"
                                 }
-                                """))
+                                """.formatted(feedbackNote)))
                 .andExpect(status().isOk());
 
         String secondCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
@@ -841,16 +842,19 @@ class Mvp2AiCodeReviewTests {
         JsonNode secondCreateJson = objectMapper.readTree(secondCreateResponse).path("data");
         long secondReviewId = secondCreateJson.path("reviewId").asLong();
         assertThat(secondCreateJson.path("reviewMemorySignals")).hasSize(1);
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("signalType").asText())
-                .isEqualTo("confirmed_issue_pattern");
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("feedbackStatus").asText())
-                .isEqualTo("accepted");
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("projectId").asLong())
-                .isEqualTo(project.id());
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("reviewId").asLong())
-                .isEqualTo(firstReviewId);
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
-                .isEqualTo(issueId);
+        JsonNode createMemorySignal = secondCreateJson.path("reviewMemorySignals").get(0);
+        assertThat(createMemorySignal.path("signalType").asText()).isEqualTo("confirmed_issue_pattern");
+        assertThat(createMemorySignal.path("feedbackStatus").asText()).isEqualTo("accepted");
+        assertThat(createMemorySignal.path("projectId").asLong()).isEqualTo(project.id());
+        assertThat(createMemorySignal.path("reviewId").asLong()).isEqualTo(firstReviewId);
+        assertThat(createMemorySignal.path("issueId").asLong()).isEqualTo(issueId);
+        assertThat(createMemorySignal.path("title").asText()).isEqualTo("Possible null dereference");
+        assertThat(createMemorySignal.path("filePath").asText()).isEqualTo("src/main/java/demo/UserService.java");
+        assertThat(createMemorySignal.path("lineNumber").asInt()).isEqualTo(12);
+        assertThat(createMemorySignal.path("note").asText()).isEqualTo(feedbackNote);
+        assertThat(createMemorySignal.path("description").asText()).contains("findById may return null");
+        assertThat(createMemorySignal.path("impact").asText()).contains("NullPointerException");
+        assertThat(createMemorySignal.path("suggestion").asText()).contains("Optional");
         assertContextCoverage(secondCreateJson, true, false, false, true, false);
         assertContextSourceTypes(secondCreateJson, "REVIEW_FEEDBACK_MEMORY");
         String prompt = llmClient.lastRequest().get().prompt();
@@ -861,7 +865,7 @@ class Mvp2AiCodeReviewTests {
                 .contains("projectId=" + project.id())
                 .contains("reviewId=" + firstReviewId)
                 .contains("issueId=" + issueId)
-                .contains("Confirmed nullable repository lookup pattern for this project.");
+                .contains(feedbackNote);
 
         String secondDetailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", secondReviewId))
                 .andExpect(status().isOk())
@@ -869,11 +873,19 @@ class Mvp2AiCodeReviewTests {
                 .getResponse()
                 .getContentAsString();
 
-        JsonNode detailMemorySignals = objectMapper.readTree(secondDetailResponse).path("data").path("reviewMemorySignals");
+        JsonNode secondDetailJson = objectMapper.readTree(secondDetailResponse).path("data");
+        JsonNode detailMemorySignals = secondDetailJson.path("reviewMemorySignals");
         assertThat(detailMemorySignals).hasSize(1);
-        assertThat(detailMemorySignals.get(0).path("signalType").asText()).isEqualTo("confirmed_issue_pattern");
-        assertThat(detailMemorySignals.get(0).path("reviewId").asLong()).isEqualTo(firstReviewId);
-        assertThat(detailMemorySignals.get(0).path("issueId").asLong()).isEqualTo(issueId);
+        JsonNode detailMemorySignal = detailMemorySignals.get(0);
+        assertThat(detailMemorySignal.path("signalType").asText()).isEqualTo("confirmed_issue_pattern");
+        assertThat(detailMemorySignal.path("feedbackStatus").asText()).isEqualTo("accepted");
+        assertThat(detailMemorySignal.path("reviewId").asLong()).isEqualTo(firstReviewId);
+        assertThat(detailMemorySignal.path("issueId").asLong()).isEqualTo(issueId);
+        assertThat(detailMemorySignal.path("title").asText()).isEqualTo("Possible null dereference");
+        assertThat(detailMemorySignal.path("filePath").asText()).isEqualTo("src/main/java/demo/UserService.java");
+        assertThat(detailMemorySignal.path("lineNumber").asInt()).isEqualTo(12);
+        assertThat(detailMemorySignal.path("note").asText()).isEqualTo(feedbackNote);
+        assertOutcomeSummary(secondDetailJson, 1, 1, 0, 0, 0, 0, 0, 0, 0);
 
         String eventsResponse = mockMvc.perform(get("/api/reviews/{reviewId}/events", secondReviewId))
                 .andExpect(status().isOk())
@@ -881,12 +893,26 @@ class Mvp2AiCodeReviewTests {
                 .getResponse()
                 .getContentAsString();
 
-        JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
-        JsonNode eventMemorySignals = objectMapper.readTree(eventsResponse).path("data").path("reviewMemorySignals");
+        JsonNode eventData = objectMapper.readTree(eventsResponse).path("data");
+        JsonNode events = eventData.path("events");
+        JsonNode eventMemorySignals = eventData.path("reviewMemorySignals");
         assertThat(eventMemorySignals).hasSize(1);
-        assertThat(eventMemorySignals.get(0).path("signalType").asText()).isEqualTo("confirmed_issue_pattern");
-        assertThat(eventMemorySignals.get(0).path("reviewId").asLong()).isEqualTo(firstReviewId);
-        assertThat(eventMemorySignals.get(0).path("issueId").asLong()).isEqualTo(issueId);
+        JsonNode eventMemorySignal = eventMemorySignals.get(0);
+        assertThat(eventMemorySignal.path("signalType").asText()).isEqualTo("confirmed_issue_pattern");
+        assertThat(eventMemorySignal.path("feedbackStatus").asText()).isEqualTo("accepted");
+        assertThat(eventMemorySignal.path("reviewId").asLong()).isEqualTo(firstReviewId);
+        assertThat(eventMemorySignal.path("issueId").asLong()).isEqualTo(issueId);
+        assertThat(eventMemorySignal.path("title").asText()).isEqualTo("Possible null dereference");
+        assertThat(eventMemorySignal.path("filePath").asText()).isEqualTo("src/main/java/demo/UserService.java");
+        assertThat(eventMemorySignal.path("lineNumber").asInt()).isEqualTo(12);
+        assertThat(eventMemorySignal.path("note").asText()).isEqualTo(feedbackNote);
+        assertOutcomeSummary(eventData, 1, 1, 0, 0, 0, 0, 0, 0, 0);
+        assertThat(events)
+                .filteredOn(event -> "REVIEW_CONTEXT_COVERAGE_RECORDED".equals(event.path("eventType").asText()))
+                .first()
+                .satisfies(event -> assertThat(event.path("outputSummary").asText())
+                        .contains("reviewMemorySignals=true")
+                        .contains("REVIEW_FEEDBACK_MEMORY"));
         assertThat(events)
                 .filteredOn(event -> "REVIEW_FEEDBACK_MEMORY_LOADED".equals(event.path("eventType").asText()))
                 .first()
