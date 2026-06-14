@@ -1411,6 +1411,12 @@ function ReviewMemorySignalGroup({
 function ReviewMemorySignalItem({ signal }: { signal: ReviewMemorySignal }) {
   const source = `Review #${signal.reviewId} · Issue #${signal.issueId}`;
   const location = signal.filePath ? `${signal.filePath}${signal.lineNumber ? `:${signal.lineNumber}` : ""}` : null;
+  const humanNote = signalText(signal.note);
+  const contextRows = [
+    { label: "问题", value: signalText(signal.description) },
+    { label: "影响", value: signalText(signal.impact) },
+    { label: "建议", value: signalText(signal.suggestion) },
+  ].filter((item): item is { label: string; value: string } => Boolean(item.value));
 
   return (
     <div className="min-w-0 rounded-md border border-border/70 bg-muted/20 p-3">
@@ -1423,8 +1429,29 @@ function ReviewMemorySignalItem({ signal }: { signal: ReviewMemorySignal }) {
       </div>
       <div className="mt-2 break-words text-sm font-medium">{signal.title}</div>
       {location ? <div className="mt-2 truncate rounded bg-background px-2 py-1 font-mono text-xs text-muted-foreground">{location}</div> : null}
+      {humanNote ? (
+        <div className="mt-3 rounded-md border border-primary/15 bg-primary/5 px-3 py-2">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-primary/80">人类反馈</div>
+          <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5">{humanNote}</p>
+        </div>
+      ) : null}
+      {contextRows.length ? (
+        <div className="mt-3 grid gap-2">
+          {contextRows.map((item) => (
+            <div key={item.label} className="min-w-0">
+              <div className="text-[11px] font-medium text-muted-foreground">{item.label}</div>
+              <p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-muted-foreground">{item.value}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function signalText(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
 function ReviewIssueCard({
