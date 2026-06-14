@@ -417,6 +417,8 @@ export const api = {
   ) => request<ReviewCreateResult>(`/api/projects/${projectId}/reviews`, { method: "POST", body: JSON.stringify(body) }),
   reviewSources: (projectId: number) => request<GitReviewSource[]>(`/api/projects/${projectId}/review-sources`),
   projectReviews: (projectId: number, limit = 20) => request<ReviewRecord[]>(`/api/projects/${projectId}/reviews?limit=${limit}`),
+  projectReviewMemorySignals: (projectId: number, limit = 20) =>
+    request<ReviewMemorySignal[]>(`/api/projects/${projectId}/review-memory-signals?limit=${limit}`),
   review: (reviewId: number) => request<ReviewDetail>(`/api/reviews/${reviewId}`),
   updateReviewIssue: (issueId: number, body: { status: string; note?: string | null }) =>
     request<ReviewIssue>(`/api/review-issues/${issueId}`, { method: "PATCH", body: JSON.stringify(body) }),
