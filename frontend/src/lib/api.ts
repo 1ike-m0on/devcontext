@@ -88,6 +88,7 @@ export type ReviewIssue = {
   suggestion?: string;
   confidence?: string;
   status?: string;
+  note?: string | null;
 };
 
 export type ReviewRecord = {
