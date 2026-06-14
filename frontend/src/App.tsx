@@ -805,6 +805,14 @@ function ReviewWorkspace({
     setReviewId(String(id));
   }
 
+  async function openReviewMemorySource(reviewId: number) {
+    try {
+      await loadReviewById(reviewId);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "来源 Review 加载失败。");
+    }
+  }
+
   return (
     <div className="grid min-w-0 grid-cols-1 gap-5 2xl:grid-cols-[minmax(360px,0.72fr)_minmax(620px,1.28fr)]">
       <section className="grid min-w-0 gap-5 overflow-hidden">
@@ -945,6 +953,7 @@ function ReviewWorkspace({
           fetching={reviewMemoryInventory.isFetching}
           error={reviewMemoryInventory.isError}
           onRefresh={() => void reviewMemoryInventory.refetch()}
+          onOpenReview={(reviewId) => void openReviewMemorySource(reviewId)}
         />
       </section>
 
@@ -1357,6 +1366,7 @@ function ReviewMemoryInventoryPanel({
   fetching,
   error,
   onRefresh,
+  onOpenReview,
 }: {
   project: Project | null;
   signals?: ReviewMemorySignal[] | null;
@@ -1364,6 +1374,7 @@ function ReviewMemoryInventoryPanel({
   fetching: boolean;
   error: boolean;
   onRefresh: () => void;
+  onOpenReview: (reviewId: number) => void;
 }) {
   const items = signals ?? [];
   const { confirmed, suppressions, other } = splitReviewMemorySignals(items);
@@ -1404,6 +1415,7 @@ function ReviewMemoryInventoryPanel({
               tone="confirmed"
               showEmpty
               emptyText="暂无 confirmed 反馈。"
+              onOpenReview={onOpenReview}
             />
             <ReviewMemorySignalGroup
               title="误报抑制模式"
@@ -1412,6 +1424,7 @@ function ReviewMemoryInventoryPanel({
               tone="suppressed"
               showEmpty
               emptyText="暂无 suppression 反馈。"
+              onOpenReview={onOpenReview}
             />
             {other.length ? (
               <ReviewMemorySignalGroup
@@ -1419,6 +1432,7 @@ function ReviewMemoryInventoryPanel({
                 description="暂未归入固定类别的历史反馈。"
                 signals={other}
                 tone="neutral"
+                onOpenReview={onOpenReview}
               />
             ) : null}
           </div>
@@ -1491,6 +1505,7 @@ function ReviewMemorySignalGroup({
   tone,
   showEmpty = false,
   emptyText = "暂无反馈信号。",
+  onOpenReview,
 }: {
   title: string;
   description: string;
@@ -1498,6 +1513,7 @@ function ReviewMemorySignalGroup({
   tone: "confirmed" | "suppressed" | "neutral";
   showEmpty?: boolean;
   emptyText?: string;
+  onOpenReview?: (reviewId: number) => void;
 }) {
   if (signals.length === 0 && !showEmpty) return null;
 
@@ -1513,7 +1529,11 @@ function ReviewMemorySignalGroup({
       {signals.length ? (
         <div className="mt-3 grid gap-2">
           {signals.map((signal, index) => (
-            <ReviewMemorySignalItem key={`${signal.signalType}:${signal.reviewId}:${signal.issueId}:${signal.updatedAt ?? index}`} signal={signal} />
+            <ReviewMemorySignalItem
+              key={`${signal.signalType}:${signal.reviewId}:${signal.issueId}:${signal.updatedAt ?? index}`}
+              signal={signal}
+              onOpenReview={onOpenReview}
+            />
           ))}
         </div>
       ) : (
@@ -1533,7 +1553,13 @@ function splitReviewMemorySignals(signals: ReviewMemorySignal[]) {
   };
 }
 
-function ReviewMemorySignalItem({ signal }: { signal: ReviewMemorySignal }) {
+function ReviewMemorySignalItem({
+  signal,
+  onOpenReview,
+}: {
+  signal: ReviewMemorySignal;
+  onOpenReview?: (reviewId: number) => void;
+}) {
   const source = `Review #${signal.reviewId} · Issue #${signal.issueId}`;
   const location = signal.filePath ? `${signal.filePath}${signal.lineNumber ? `:${signal.lineNumber}` : ""}` : null;
   const humanNote = signalText(signal.note);
@@ -1568,6 +1594,20 @@ function ReviewMemorySignalItem({ signal }: { signal: ReviewMemorySignal }) {
               <p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-muted-foreground">{item.value}</p>
             </div>
           ))}
+        </div>
+      ) : null}
+      {onOpenReview ? (
+        <div className="mt-3 flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-full whitespace-nowrap sm:w-auto"
+            onClick={() => onOpenReview(signal.reviewId)}
+          >
+            <History className="size-3.5" />
+            打开来源 Review
+          </Button>
         </div>
       ) : null}
     </div>
