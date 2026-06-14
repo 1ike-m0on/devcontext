@@ -9,6 +9,7 @@ import com.devcontext.domain.review.ReviewDetail;
 import com.devcontext.domain.review.ReviewEventDetail;
 import com.devcontext.domain.review.ReviewHistoryItem;
 import com.devcontext.domain.review.ReviewIssue;
+import com.devcontext.domain.review.ReviewMemorySignal;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -60,6 +61,14 @@ public class ReviewController {
             @RequestParam(required = false) Integer limit
     ) {
         return ApiResponse.ok(reviewService.listProjectReviews(projectId, limit == null ? 20 : limit));
+    }
+
+    @GetMapping("/api/projects/{projectId}/review-memory-signals")
+    public ApiResponse<List<ReviewMemorySignal>> listProjectReviewMemorySignals(
+            @PathVariable Long projectId,
+            @RequestParam(required = false) Integer limit
+    ) {
+        return ApiResponse.ok(reviewService.listProjectReviewMemorySignals(projectId, limit == null ? 20 : limit));
     }
 
     @GetMapping("/api/reviews/{reviewId}/events")

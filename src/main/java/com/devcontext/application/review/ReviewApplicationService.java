@@ -244,6 +244,10 @@ public class ReviewApplicationService {
                 .toList();
     }
 
+    public List<ReviewMemorySignal> listProjectReviewMemorySignals(Long projectId, int limit) {
+        return reviewMemorySignalService.findProjectSignals(projectId, limit);
+    }
+
     public ReviewEventDetail getReviewEvents(Long reviewId) {
         ReviewRecord record = reviewRecordRepository.findById(reviewId)
                 .orElseThrow(() -> new ApiException("REVIEW_NOT_FOUND", "Review not found", HttpStatus.NOT_FOUND));

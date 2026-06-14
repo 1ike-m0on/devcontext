@@ -1067,6 +1067,110 @@ class Mvp2AiCodeReviewTests {
                         .contains("0 issues retained, 1 downgraded, 1 by prior feedback"));
     }
 
+    @Test
+    void listsProjectReviewMemorySignalInventory() throws Exception {
+        createReviewFixture(projectRoot);
+        Project project = projectService.createProject("review-memory-inventory-project", projectRoot.toString(), "main");
+        String acceptedNote = "Confirmed nullable lookup feedback for inventory.";
+        String falsePositiveNote = "Inventory suppression: repository contract already guarantees a non-null user.";
+
+        String pendingCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "manual",
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/inventory-pending",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        long pendingReviewId = objectMapper.readTree(pendingCreateResponse).path("data").path("reviewId").asLong();
+        long pendingIssueId = reviewDetail(pendingReviewId).path("issues").get(0).path("id").asLong();
+
+        String acceptedCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "manual",
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/inventory-confirmed",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        long acceptedReviewId = objectMapper.readTree(acceptedCreateResponse).path("data").path("reviewId").asLong();
+        long acceptedIssueId = reviewDetail(acceptedReviewId).path("issues").get(0).path("id").asLong();
+        updateIssueStatus(acceptedIssueId, "accepted", acceptedNote);
+
+        String falsePositiveCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "manual",
+                                  "baseBranch": "main",
+                                  "compareBranch": "feature/inventory-suppression",
+                                  "mode": "strict",
+                                  "diffText": "diff --git a/src/main/java/demo/UserService.java b/src/main/java/demo/UserService.java\\n+User user = userRepository.findById(id);\\n+return user.getName();"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        long falsePositiveReviewId = objectMapper.readTree(falsePositiveCreateResponse).path("data").path("reviewId").asLong();
+        long falsePositiveIssueId = reviewDetail(falsePositiveReviewId).path("issues").get(0).path("id").asLong();
+        updateIssueStatus(falsePositiveIssueId, "false_positive", falsePositiveNote);
+
+        JsonNode inventorySignals = reviewMemorySignals(project.id());
+        assertThat(inventorySignals).hasSize(2);
+        assertThat(inventorySignals)
+                .extracting(signal -> signal.path("signalType").asText())
+                .containsExactlyInAnyOrder("confirmed_issue_pattern", "false_positive_pattern");
+        assertThat(inventorySignals)
+                .extracting(signal -> signal.path("feedbackStatus").asText())
+                .containsExactlyInAnyOrder("accepted", "false_positive");
+        assertThat(inventorySignals)
+                .extracting(signal -> signal.path("issueId").asLong())
+                .doesNotContain(pendingIssueId);
+
+        JsonNode confirmedSignal = findSignalByStatus(inventorySignals, "accepted");
+        assertReviewMemorySignal(
+                confirmedSignal,
+                "confirmed_issue_pattern",
+                "accepted",
+                project.id(),
+                acceptedReviewId,
+                acceptedIssueId,
+                acceptedNote
+        );
+        assertThat(confirmedSignal.path("updatedAt").asText()).isNotBlank();
+
+        JsonNode falsePositiveSignal = findSignalByStatus(inventorySignals, "false_positive");
+        assertReviewMemorySignal(
+                falsePositiveSignal,
+                "false_positive_pattern",
+                "false_positive",
+                project.id(),
+                falsePositiveReviewId,
+                falsePositiveIssueId,
+                falsePositiveNote
+        );
+        assertThat(falsePositiveSignal.path("updatedAt").asText()).isNotBlank();
+
+        JsonNode limitedSignals = reviewMemorySignals(project.id(), 1);
+        assertThat(limitedSignals).hasSize(1);
+        assertThat(limitedSignals.get(0).path("issueId").asLong()).isEqualTo(falsePositiveIssueId);
+    }
+
     private String readTestResource(String resourcePath) throws IOException {
         try (var input = Mvp2AiCodeReviewTests.class.getClassLoader().getResourceAsStream(resourcePath)) {
             assertThat(input).as("test resource %s", resourcePath).isNotNull();
@@ -1161,6 +1265,18 @@ class Mvp2AiCodeReviewTests {
         assertThat(signal.path("note").asText()).isEqualTo(note);
     }
 
+    private JsonNode findSignalByStatus(JsonNode signals, String feedbackStatus) {
+        JsonNode match = null;
+        for (JsonNode signal : signals) {
+            if (feedbackStatus.equals(signal.path("feedbackStatus").asText())) {
+                match = signal;
+                break;
+            }
+        }
+        assertThat(match).as("review memory signal with status %s", feedbackStatus).isNotNull();
+        return match;
+    }
+
     private void assertContextCoverage(
             JsonNode createJson,
             boolean reviewRules,
@@ -1236,15 +1352,38 @@ class Mvp2AiCodeReviewTests {
         return objectMapper.readTree(response).path("data");
     }
 
+    private JsonNode reviewMemorySignals(long projectId) throws Exception {
+        String response = mockMvc.perform(get("/api/projects/{projectId}/review-memory-signals", projectId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(response).path("data");
+    }
+
+    private JsonNode reviewMemorySignals(long projectId, int limit) throws Exception {
+        String response = mockMvc.perform(get("/api/projects/{projectId}/review-memory-signals", projectId)
+                        .param("limit", String.valueOf(limit)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(response).path("data");
+    }
+
     private void updateIssueStatus(long issueId, String status) throws Exception {
+        updateIssueStatus(issueId, status, "Outcome summary test.");
+    }
+
+    private void updateIssueStatus(long issueId, String status, String note) throws Exception {
         mockMvc.perform(patch("/api/review-issues/{issueId}", issueId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "status": "%s",
-                                  "note": "Outcome summary test."
+                                  "note": "%s"
                                 }
-                                """.formatted(status)))
+                                """.formatted(status, note)))
                 .andExpect(status().isOk());
     }
 
