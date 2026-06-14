@@ -924,6 +924,7 @@ class Mvp2AiCodeReviewTests {
     void injectsRecentHumanReviewFeedbackIntoNextReviewPrompt() throws Exception {
         createReviewFixture(projectRoot);
         Project project = projectService.createProject("feedback-aware-review-project", projectRoot.toString(), "main");
+        String feedbackNote = "Repository contract already guarantees a non-null user in this fixture.";
 
         String firstCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -954,9 +955,9 @@ class Mvp2AiCodeReviewTests {
                         .content("""
                                 {
                                   "status": "false_positive",
-                                  "note": "Repository contract already guarantees a non-null user in this fixture."
+                                  "note": "%s"
                                 }
-                                """))
+                                """.formatted(feedbackNote)))
                 .andExpect(status().isOk());
 
         String secondCreateResponse = mockMvc.perform(post("/api/projects/{projectId}/reviews", project.id())
@@ -978,16 +979,19 @@ class Mvp2AiCodeReviewTests {
         JsonNode secondCreateJson = objectMapper.readTree(secondCreateResponse).path("data");
         long secondReviewId = secondCreateJson.path("reviewId").asLong();
         assertThat(secondCreateJson.path("reviewMemorySignals")).hasSize(1);
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("signalType").asText())
-                .isEqualTo("false_positive_pattern");
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("feedbackStatus").asText())
-                .isEqualTo("false_positive");
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("projectId").asLong())
-                .isEqualTo(project.id());
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("reviewId").asLong())
-                .isEqualTo(firstReviewId);
-        assertThat(secondCreateJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
-                .isEqualTo(issueId);
+        JsonNode createMemorySignal = secondCreateJson.path("reviewMemorySignals").get(0);
+        assertReviewMemorySignal(
+                createMemorySignal,
+                "false_positive_pattern",
+                "false_positive",
+                project.id(),
+                firstReviewId,
+                issueId,
+                feedbackNote
+        );
+        assertThat(createMemorySignal.path("description").asText()).contains("findById may return null");
+        assertThat(createMemorySignal.path("impact").asText()).contains("NullPointerException");
+        assertThat(createMemorySignal.path("suggestion").asText()).contains("Optional");
         assertContextCoverage(secondCreateJson, true, false, false, true, false);
         assertContextSourceTypes(secondCreateJson, "REVIEW_FEEDBACK_MEMORY");
         assertThat(llmClient.lastRequest().get().prompt())
@@ -997,7 +1001,7 @@ class Mvp2AiCodeReviewTests {
                 .contains("projectId=" + project.id())
                 .contains("reviewId=" + firstReviewId)
                 .contains("issueId=" + issueId)
-                .contains("Repository contract already guarantees a non-null user in this fixture.")
+                .contains(feedbackNote)
                 .contains("Do not repeat false_positive_pattern entries");
 
         String secondDetailResponse = mockMvc.perform(get("/api/reviews/{reviewId}", secondReviewId))
@@ -1009,12 +1013,17 @@ class Mvp2AiCodeReviewTests {
         JsonNode secondDetailJson = objectMapper.readTree(secondDetailResponse).path("data");
         assertThat(secondDetailJson.path("issues")).isEmpty();
         assertThat(secondDetailJson.path("reviewMemorySignals")).hasSize(1);
-        assertThat(secondDetailJson.path("reviewMemorySignals").get(0).path("signalType").asText())
-                .isEqualTo("false_positive_pattern");
-        assertThat(secondDetailJson.path("reviewMemorySignals").get(0).path("reviewId").asLong())
-                .isEqualTo(firstReviewId);
-        assertThat(secondDetailJson.path("reviewMemorySignals").get(0).path("issueId").asLong())
-                .isEqualTo(issueId);
+        JsonNode detailMemorySignal = secondDetailJson.path("reviewMemorySignals").get(0);
+        assertReviewMemorySignal(
+                detailMemorySignal,
+                "false_positive_pattern",
+                "false_positive",
+                project.id(),
+                firstReviewId,
+                issueId,
+                feedbackNote
+        );
+        assertOutcomeSummary(secondDetailJson, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
         String eventsResponse = mockMvc.perform(get("/api/reviews/{reviewId}/events", secondReviewId))
                 .andExpect(status().isOk())
@@ -1022,15 +1031,30 @@ class Mvp2AiCodeReviewTests {
                 .getResponse()
                 .getContentAsString();
 
-        JsonNode events = objectMapper.readTree(eventsResponse).path("data").path("events");
-        JsonNode eventMemorySignals = objectMapper.readTree(eventsResponse).path("data").path("reviewMemorySignals");
+        JsonNode eventData = objectMapper.readTree(eventsResponse).path("data");
+        JsonNode events = eventData.path("events");
+        JsonNode eventMemorySignals = eventData.path("reviewMemorySignals");
         assertThat(eventMemorySignals).hasSize(1);
-        assertThat(eventMemorySignals.get(0).path("signalType").asText()).isEqualTo("false_positive_pattern");
-        assertThat(eventMemorySignals.get(0).path("reviewId").asLong()).isEqualTo(firstReviewId);
-        assertThat(eventMemorySignals.get(0).path("issueId").asLong()).isEqualTo(issueId);
+        assertReviewMemorySignal(
+                eventMemorySignals.get(0),
+                "false_positive_pattern",
+                "false_positive",
+                project.id(),
+                firstReviewId,
+                issueId,
+                feedbackNote
+        );
+        assertOutcomeSummary(eventData, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         assertThat(events)
                 .extracting(event -> event.path("eventType").asText())
                 .contains("REVIEW_FEEDBACK_MEMORY_LOADED");
+        assertThat(events)
+                .filteredOn(event -> "REVIEW_CONTEXT_COVERAGE_RECORDED".equals(event.path("eventType").asText()))
+                .first()
+                .satisfies(event -> assertThat(event.path("outputSummary").asText())
+                        .contains("sourceTypes=")
+                        .contains("REVIEW_FEEDBACK_MEMORY")
+                        .contains("reviewMemorySignals=true"));
         assertThat(events)
                 .filteredOn(event -> "REVIEW_FEEDBACK_MEMORY_LOADED".equals(event.path("eventType").asText()))
                 .first()
@@ -1115,6 +1139,26 @@ class Mvp2AiCodeReviewTests {
             String sourceReliability
     ) {
         return new ProjectProfileSourceReference(sourcePath, evidenceType, sourceKind, sourceReliability);
+    }
+
+    private void assertReviewMemorySignal(
+            JsonNode signal,
+            String signalType,
+            String feedbackStatus,
+            long projectId,
+            long reviewId,
+            long issueId,
+            String note
+    ) {
+        assertThat(signal.path("signalType").asText()).isEqualTo(signalType);
+        assertThat(signal.path("feedbackStatus").asText()).isEqualTo(feedbackStatus);
+        assertThat(signal.path("projectId").asLong()).isEqualTo(projectId);
+        assertThat(signal.path("reviewId").asLong()).isEqualTo(reviewId);
+        assertThat(signal.path("issueId").asLong()).isEqualTo(issueId);
+        assertThat(signal.path("title").asText()).isEqualTo("Possible null dereference");
+        assertThat(signal.path("filePath").asText()).isEqualTo("src/main/java/demo/UserService.java");
+        assertThat(signal.path("lineNumber").asInt()).isEqualTo(12);
+        assertThat(signal.path("note").asText()).isEqualTo(note);
     }
 
     private void assertContextCoverage(
