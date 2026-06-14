@@ -719,6 +719,11 @@ function ReviewWorkspace({
     queryFn: () => api.reviewSources(project?.id as number),
     enabled: Boolean(project?.id),
   });
+  const reviewMemoryInventory = useQuery({
+    queryKey: ["project-review-memory-signals", project?.id],
+    queryFn: () => api.projectReviewMemorySignals(project?.id as number, 20),
+    enabled: Boolean(project?.id),
+  });
 
   useEffect(() => {
     setForm((current) => ({
@@ -775,6 +780,7 @@ function ReviewWorkspace({
             ),
           );
           void queryClient.invalidateQueries({ queryKey: ["project-reviews", project.id] });
+          void queryClient.invalidateQueries({ queryKey: ["project-review-memory-signals", project.id] });
         }
       }
       onNotice("问题状态已更新。");
@@ -932,6 +938,14 @@ function ReviewWorkspace({
             )}
           </CardContent>
         </Card>
+        <ReviewMemoryInventoryPanel
+          project={project}
+          signals={reviewMemoryInventory.data}
+          loading={reviewMemoryInventory.isLoading}
+          fetching={reviewMemoryInventory.isFetching}
+          error={reviewMemoryInventory.isError}
+          onRefresh={() => void reviewMemoryInventory.refetch()}
+        />
       </section>
 
       <section className="grid min-w-0 gap-5 overflow-hidden">
@@ -1336,13 +1350,106 @@ function ReviewOutcomeMetric({
   );
 }
 
+function ReviewMemoryInventoryPanel({
+  project,
+  signals,
+  loading,
+  fetching,
+  error,
+  onRefresh,
+}: {
+  project: Project | null;
+  signals?: ReviewMemorySignal[] | null;
+  loading: boolean;
+  fetching: boolean;
+  error: boolean;
+  onRefresh: () => void;
+}) {
+  const items = signals ?? [];
+  const { confirmed, suppressions, other } = splitReviewMemorySignals(items);
+
+  return (
+    <Card className="min-w-0 overflow-hidden">
+      <CardHeader>
+        <div>
+          <CardTitle>反馈记忆清单</CardTitle>
+          <CardDescription>{project ? "当前项目已沉淀的 Review feedback memory。" : "先选择项目后查看反馈记忆。"}</CardDescription>
+        </div>
+        <Button variant="secondary" onClick={onRefresh} disabled={!project || fetching}>
+          {fetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+          刷新
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {!project ? (
+          <EmptyState text="选择项目后会显示反馈记忆清单。" />
+        ) : loading ? (
+          <EmptyState text="正在加载反馈记忆。" />
+        ) : error ? (
+          <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100">
+            反馈记忆加载失败。请确认后端已包含 inventory API。
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState text="还没有 confirmed 或 suppression 反馈记忆。" />
+        ) : (
+          <div className="grid gap-3">
+            <div className="grid grid-cols-2 gap-2">
+              <ReviewMemoryInventoryMetric label="confirmed" value={confirmed.length} tone="confirmed" />
+              <ReviewMemoryInventoryMetric label="suppression" value={suppressions.length} tone="suppressed" />
+            </div>
+            <ReviewMemorySignalGroup
+              title="已确认问题模式"
+              description="accepted / fixed 反馈。"
+              signals={confirmed}
+              tone="confirmed"
+              showEmpty
+              emptyText="暂无 confirmed 反馈。"
+            />
+            <ReviewMemorySignalGroup
+              title="误报抑制模式"
+              description="false_positive / rejected 反馈。"
+              signals={suppressions}
+              tone="suppressed"
+              showEmpty
+              emptyText="暂无 suppression 反馈。"
+            />
+            {other.length ? (
+              <ReviewMemorySignalGroup
+                title="其他反馈信号"
+                description="暂未归入固定类别的历史反馈。"
+                signals={other}
+                tone="neutral"
+              />
+            ) : null}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReviewMemoryInventoryMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "confirmed" | "suppressed";
+}) {
+  return (
+    <div className={cn("rounded-md border px-3 py-2", reviewSignalToneClass(tone))}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
+    </div>
+  );
+}
+
 function ReviewMemorySignalsPanel({ signals }: { signals?: ReviewMemorySignal[] | null }) {
   const items = signals ?? [];
   if (items.length === 0) return null;
 
-  const confirmed = items.filter((signal) => signal.signalType === "confirmed_issue_pattern");
-  const suppressions = items.filter((signal) => signal.signalType === "false_positive_pattern");
-  const other = items.filter((signal) => signal.signalType !== "confirmed_issue_pattern" && signal.signalType !== "false_positive_pattern");
+  const { confirmed, suppressions, other } = splitReviewMemorySignals(items);
 
   return (
     <section className="min-w-0 rounded-md border border-border bg-background p-3">
@@ -1382,13 +1489,17 @@ function ReviewMemorySignalGroup({
   description,
   signals,
   tone,
+  showEmpty = false,
+  emptyText = "暂无反馈信号。",
 }: {
   title: string;
   description: string;
   signals: ReviewMemorySignal[];
   tone: "confirmed" | "suppressed" | "neutral";
+  showEmpty?: boolean;
+  emptyText?: string;
 }) {
-  if (signals.length === 0) return null;
+  if (signals.length === 0 && !showEmpty) return null;
 
   return (
     <div className={cn("min-w-0 rounded-md border p-3", reviewSignalToneClass(tone))}>
@@ -1399,13 +1510,27 @@ function ReviewMemorySignalGroup({
         </div>
         <Badge variant={tone === "suppressed" ? "warning" : tone === "confirmed" ? "success" : "secondary"}>{signals.length}</Badge>
       </div>
-      <div className="mt-3 grid gap-2">
-        {signals.map((signal, index) => (
-          <ReviewMemorySignalItem key={`${signal.signalType}:${signal.reviewId}:${signal.issueId}:${signal.updatedAt ?? index}`} signal={signal} />
-        ))}
-      </div>
+      {signals.length ? (
+        <div className="mt-3 grid gap-2">
+          {signals.map((signal, index) => (
+            <ReviewMemorySignalItem key={`${signal.signalType}:${signal.reviewId}:${signal.issueId}:${signal.updatedAt ?? index}`} signal={signal} />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-md border border-dashed border-border/80 bg-background/60 px-3 py-4 text-sm text-muted-foreground">
+          {emptyText}
+        </div>
+      )}
     </div>
   );
+}
+
+function splitReviewMemorySignals(signals: ReviewMemorySignal[]) {
+  return {
+    confirmed: signals.filter((signal) => signal.signalType === "confirmed_issue_pattern"),
+    suppressions: signals.filter((signal) => signal.signalType === "false_positive_pattern"),
+    other: signals.filter((signal) => signal.signalType !== "confirmed_issue_pattern" && signal.signalType !== "false_positive_pattern"),
+  };
 }
 
 function ReviewMemorySignalItem({ signal }: { signal: ReviewMemorySignal }) {
