@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -708,6 +708,7 @@ function ReviewWorkspace({
   });
   const [reviewId, setReviewId] = useState("");
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
+  const [focusedReviewIssueId, setFocusedReviewIssueId] = useState<number | null>(null);
 
   const reviewHistory = useQuery({
     queryKey: ["project-reviews", project?.id],
@@ -754,10 +755,14 @@ function ReviewWorkspace({
         selectedFiles: form.selectedFiles.length ? form.selectedFiles : null,
       });
     },
+    onMutate: () => {
+      setFocusedReviewIssueId(null);
+    },
     onSuccess: async (result) => {
       const next = await api.review(result.reviewId);
       setReviewId(String(result.reviewId));
       setDetail(next);
+      setFocusedReviewIssueId(null);
       void queryClient.invalidateQueries({ queryKey: ["project-reviews", project?.id] });
       onNotice(result.diffTruncated ? `审查完成，解析出 ${next.issues.length} 个问题。注意：diff 已截断，请查看追踪确认范围。` : `审查完成，解析出 ${next.issues.length} 个问题。`);
     },
@@ -794,20 +799,28 @@ function ReviewWorkspace({
       onNotice("请填写 Review ID。");
       return;
     }
+    setFocusedReviewIssueId(null);
     const next = await api.review(id);
     setReviewId(String(id));
     setDetail(next);
   }
 
   async function loadReviewById(id: number) {
+    setFocusedReviewIssueId(null);
     const next = await api.review(id);
     setDetail(next);
     setReviewId(String(id));
+    return next;
   }
 
-  async function openReviewMemorySource(reviewId: number) {
+  async function openReviewMemorySource(reviewId: number, issueId: number) {
     try {
-      await loadReviewById(reviewId);
+      const next = await loadReviewById(reviewId);
+      if (next.issues.some((issue) => issue.id === issueId)) {
+        setFocusedReviewIssueId(issueId);
+      } else {
+        onNotice("已打开来源 Review，但没有找到来源 Issue。");
+      }
     } catch (error) {
       onNotice(error instanceof Error ? error.message : "来源 Review 加载失败。");
     }
@@ -936,6 +949,7 @@ function ReviewWorkspace({
                     active={detail?.review.id === record.id}
                     onOpen={() => {
                       setReviewId(String(record.id));
+                      setFocusedReviewIssueId(null);
                       void loadReviewById(record.id);
                     }}
                   />
@@ -953,13 +967,14 @@ function ReviewWorkspace({
           fetching={reviewMemoryInventory.isFetching}
           error={reviewMemoryInventory.isError}
           onRefresh={() => void reviewMemoryInventory.refetch()}
-          onOpenReview={(reviewId) => void openReviewMemorySource(reviewId)}
+          onOpenReview={(reviewId, issueId) => void openReviewMemorySource(reviewId, issueId)}
         />
       </section>
 
       <section className="grid min-w-0 gap-5 overflow-hidden">
         <ReviewResultPanel
           detail={detail}
+          focusedIssueId={focusedReviewIssueId}
           onOpenRun={onOpenRun}
           onUpdateIssue={(issueId, status, note) => updateIssue.mutate({ issueId, status, note })}
         />
@@ -1249,10 +1264,12 @@ function ReviewHistoryOutcomeBadge({
 
 function ReviewResultPanel({
   detail,
+  focusedIssueId,
   onOpenRun,
   onUpdateIssue,
 }: {
   detail: ReviewDetail | null;
+  focusedIssueId?: number | null;
   onOpenRun: (runId: number) => void;
   onUpdateIssue: (issueId: number, status: string, note?: string | null) => void;
 }) {
@@ -1300,7 +1317,12 @@ function ReviewResultPanel({
             ) : (
               <div className="grid gap-3">
                 {detail.issues.map((issue) => (
-                  <ReviewIssueCard key={issue.id} issue={issue} onUpdateStatus={onUpdateIssue} />
+                  <ReviewIssueCard
+                    key={issue.id}
+                    issue={issue}
+                    focused={focusedIssueId === issue.id}
+                    onUpdateStatus={onUpdateIssue}
+                  />
                 ))}
               </div>
             )}
@@ -1374,7 +1396,7 @@ function ReviewMemoryInventoryPanel({
   fetching: boolean;
   error: boolean;
   onRefresh: () => void;
-  onOpenReview: (reviewId: number) => void;
+  onOpenReview: (reviewId: number, issueId: number) => void;
 }) {
   const items = signals ?? [];
   const { confirmed, suppressions, other } = splitReviewMemorySignals(items);
@@ -1513,7 +1535,7 @@ function ReviewMemorySignalGroup({
   tone: "confirmed" | "suppressed" | "neutral";
   showEmpty?: boolean;
   emptyText?: string;
-  onOpenReview?: (reviewId: number) => void;
+  onOpenReview?: (reviewId: number, issueId: number) => void;
 }) {
   if (signals.length === 0 && !showEmpty) return null;
 
@@ -1558,7 +1580,7 @@ function ReviewMemorySignalItem({
   onOpenReview,
 }: {
   signal: ReviewMemorySignal;
-  onOpenReview?: (reviewId: number) => void;
+  onOpenReview?: (reviewId: number, issueId: number) => void;
 }) {
   const source = `Review #${signal.reviewId} · Issue #${signal.issueId}`;
   const location = signal.filePath ? `${signal.filePath}${signal.lineNumber ? `:${signal.lineNumber}` : ""}` : null;
@@ -1603,7 +1625,7 @@ function ReviewMemorySignalItem({
             variant="ghost"
             size="sm"
             className="w-full whitespace-nowrap sm:w-auto"
-            onClick={() => onOpenReview(signal.reviewId)}
+            onClick={() => onOpenReview(signal.reviewId, signal.issueId)}
           >
             <History className="size-3.5" />
             打开来源 Review
@@ -1621,27 +1643,44 @@ function signalText(value?: string | null) {
 
 function ReviewIssueCard({
   issue,
+  focused = false,
   onUpdateStatus,
 }: {
   issue: ReviewIssue;
+  focused?: boolean;
   onUpdateStatus: (issueId: number, status: string, note?: string | null) => void;
 }) {
+  const articleRef = useRef<HTMLElement | null>(null);
   const [note, setNote] = useState(issue.note ?? "");
 
   useEffect(() => {
     setNote(issue.note ?? "");
   }, [issue.id, issue.note]);
 
+  useEffect(() => {
+    if (!focused) return;
+    articleRef.current?.focus({ preventScroll: true });
+    articleRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focused, issue.id]);
+
   function saveStatus(status: string) {
     onUpdateStatus(issue.id, status, note.trim() || null);
   }
 
   return (
-    <article className="min-w-0 overflow-hidden rounded-lg border border-border bg-background p-4">
+    <article
+      ref={articleRef}
+      tabIndex={focused ? -1 : undefined}
+      className={cn(
+        "min-w-0 overflow-hidden rounded-lg border bg-background p-4 transition-colors",
+        focused ? "border-primary/70 bg-primary/5 ring-1 ring-primary/25" : "border-border",
+      )}
+    >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Badge variant={severityBadge(issue.severity)}>{issue.severity}</Badge>
         <Badge variant={statusBadge(issue.status)}>{issue.status ?? "pending"}</Badge>
         {issue.confidence ? <Badge variant="secondary">{issue.confidence}</Badge> : null}
+        {focused ? <Badge variant="secondary">来源反馈记忆</Badge> : null}
         <h3 className="min-w-0 flex-1 break-words font-semibold">{issue.title}</h3>
       </div>
       <div className="mt-3 truncate rounded-md bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
