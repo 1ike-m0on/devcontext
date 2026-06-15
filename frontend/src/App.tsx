@@ -1398,8 +1398,21 @@ function ReviewMemoryInventoryPanel({
   onRefresh: () => void;
   onOpenReview: (reviewId: number, issueId: number) => void;
 }) {
+  const [filterType, setFilterType] = useState<ReviewMemoryInventoryFilter>("all");
+  const [searchText, setSearchText] = useState("");
   const items = signals ?? [];
-  const { confirmed, suppressions, other } = splitReviewMemorySignals(items);
+  const normalizedSearch = searchText.trim().toLowerCase();
+  const allGroups = splitReviewMemorySignals(items);
+  const filteredItems = useMemo(
+    () => items.filter((signal) => reviewMemorySignalMatchesFilter(signal, filterType, normalizedSearch)),
+    [items, filterType, normalizedSearch],
+  );
+  const { confirmed, suppressions, other } = splitReviewMemorySignals(filteredItems);
+  const filtersActive = filterType !== "all" || normalizedSearch.length > 0;
+  const clearFilters = () => {
+    setFilterType("all");
+    setSearchText("");
+  };
 
   return (
     <Card className="min-w-0 overflow-hidden">
@@ -1426,42 +1439,133 @@ function ReviewMemoryInventoryPanel({
           <EmptyState text="还没有 confirmed 或 suppression 反馈记忆。" />
         ) : (
           <div className="grid gap-3">
+            <div className="grid gap-2 rounded-md border border-border/80 bg-background/60 p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap gap-1.5">
+                  {reviewMemoryFilterOptions.map((option) => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      variant={filterType === option.value ? "default" : "secondary"}
+                      size="sm"
+                      className="h-8 px-2.5 text-xs"
+                      onClick={() => setFilterType(option.value)}
+                    >
+                      {option.label}
+                      <span className="ml-1 font-mono text-[11px] opacity-80">
+                        {reviewMemoryFilterCount(option.value, items, allGroups)}
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {filteredItems.length} / {items.length} signals
+                </div>
+              </div>
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={searchText}
+                    onChange={(event) => setSearchText(event.target.value)}
+                    placeholder="搜索 title、path、note、description..."
+                    className="h-9 pl-8 text-sm"
+                  />
+                </div>
+                {filtersActive ? (
+                  <Button type="button" variant="ghost" size="sm" className="h-9 whitespace-nowrap" onClick={clearFilters}>
+                    清除过滤
+                  </Button>
+                ) : null}
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <ReviewMemoryInventoryMetric label="confirmed" value={confirmed.length} tone="confirmed" />
               <ReviewMemoryInventoryMetric label="suppression" value={suppressions.length} tone="suppressed" />
             </div>
-            <ReviewMemorySignalGroup
-              title="已确认问题模式"
-              description="accepted / fixed 反馈。"
-              signals={confirmed}
-              tone="confirmed"
-              showEmpty
-              emptyText="暂无 confirmed 反馈。"
-              onOpenReview={onOpenReview}
-            />
-            <ReviewMemorySignalGroup
-              title="误报抑制模式"
-              description="false_positive / rejected 反馈。"
-              signals={suppressions}
-              tone="suppressed"
-              showEmpty
-              emptyText="暂无 suppression 反馈。"
-              onOpenReview={onOpenReview}
-            />
-            {other.length ? (
-              <ReviewMemorySignalGroup
-                title="其他反馈信号"
-                description="暂未归入固定类别的历史反馈。"
-                signals={other}
-                tone="neutral"
-                onOpenReview={onOpenReview}
-              />
-            ) : null}
+            {filteredItems.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border/80 bg-background/60 px-3 py-5 text-center">
+                <div className="text-sm font-medium">没有匹配的反馈记忆</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">调整类型过滤或搜索文本后再试。</p>
+                <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={clearFilters}>
+                  清除过滤
+                </Button>
+              </div>
+            ) : (
+              <>
+                <ReviewMemorySignalGroup
+                  title="已确认问题模式"
+                  description="accepted / fixed 反馈。"
+                  signals={confirmed}
+                  tone="confirmed"
+                  showEmpty={filterType === "all"}
+                  emptyText="暂无 confirmed 反馈。"
+                  onOpenReview={onOpenReview}
+                />
+                <ReviewMemorySignalGroup
+                  title="误报抑制模式"
+                  description="false_positive / rejected 反馈。"
+                  signals={suppressions}
+                  tone="suppressed"
+                  showEmpty={filterType === "all"}
+                  emptyText="暂无 suppression 反馈。"
+                  onOpenReview={onOpenReview}
+                />
+                {other.length ? (
+                  <ReviewMemorySignalGroup
+                    title="其他反馈信号"
+                    description="暂未归入固定类别的历史反馈。"
+                    signals={other}
+                    tone="neutral"
+                    onOpenReview={onOpenReview}
+                  />
+                ) : null}
+              </>
+            )}
           </div>
         )}
       </CardContent>
     </Card>
   );
+}
+
+type ReviewMemoryInventoryFilter = "all" | "confirmed" | "suppression";
+
+const reviewMemoryFilterOptions: Array<{ value: ReviewMemoryInventoryFilter; label: string }> = [
+  { value: "all", label: "all" },
+  { value: "confirmed", label: "confirmed" },
+  { value: "suppression", label: "suppression" },
+];
+
+function reviewMemoryFilterCount(
+  filter: ReviewMemoryInventoryFilter,
+  items: ReviewMemorySignal[],
+  groups: ReturnType<typeof splitReviewMemorySignals>,
+) {
+  if (filter === "confirmed") return groups.confirmed.length;
+  if (filter === "suppression") return groups.suppressions.length;
+  return items.length;
+}
+
+function reviewMemorySignalMatchesFilter(
+  signal: ReviewMemorySignal,
+  filter: ReviewMemoryInventoryFilter,
+  normalizedSearch: string,
+) {
+  if (filter === "confirmed" && signal.signalType !== "confirmed_issue_pattern") return false;
+  if (filter === "suppression" && signal.signalType !== "false_positive_pattern") return false;
+  if (!normalizedSearch) return true;
+
+  return [
+    signal.title,
+    signal.filePath,
+    signal.note,
+    signal.description,
+    signal.impact,
+    signal.suggestion,
+    signal.feedbackStatus,
+    signal.signalType,
+  ].some((value) => value?.toLowerCase().includes(normalizedSearch));
 }
 
 function ReviewMemoryInventoryMetric({
