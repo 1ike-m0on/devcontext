@@ -12,6 +12,7 @@ param(
     [string]$OutputDir = "docs/reports",
     [switch]$ListCases,
     [switch]$ReviewMemorySmoke,
+    [switch]$ReviewMemoryRealLlmSmoke,
     [switch]$Help
 )
 
@@ -45,6 +46,7 @@ Common options:
   -RetryCount 1
   -OutputDir docs/reports
   -ReviewMemorySmoke
+  -ReviewMemoryRealLlmSmoke
 
 The script creates a temporary benchmark project, submits fixed diff fixtures to
 the AI Code Review API, evaluates ReviewIssue quality, and writes Markdown/JSON
@@ -54,6 +56,12 @@ Use -ReviewMemorySmoke to run the focused offline Review memory signal smoke.
 That smoke exercises a stateful prior false_positive feedback flow through the
 Spring test harness and writes JSON/Markdown artifacts under target.
 
+Use -ReviewMemoryRealLlmSmoke to run the explicit manual real-provider Review
+memory smoke. It uses the local Gemini/DeepSeek configuration when present,
+seeds one prior false_positive feedback signal, performs one later Review with
+the configured provider, and writes JSON/Markdown artifacts under target. It is
+not part of the default benchmark, default Maven tests, or CI path.
+
 Use -ListCases to inspect the selected fixture set without requiring the
 DevContext service or an LLM provider.
 "@ | Write-Host
@@ -62,22 +70,57 @@ DevContext service or an LLM provider.
 
 . (Join-Path $PSScriptRoot "devcontext-report-metadata.ps1")
 
+function Write-LatestReviewMemorySmokeReport {
+    param([string]$ReportDir)
+
+    if (-not (Test-Path -LiteralPath $ReportDir)) {
+        Write-Host "Smoke report directory was not created: $ReportDir"
+        return
+    }
+
+    $latestJson = Get-ChildItem -LiteralPath $ReportDir -Filter "*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $latestMarkdown = Get-ChildItem -LiteralPath $ReportDir -Filter "*.md" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($null -ne $latestMarkdown) {
+        Write-Host "Markdown smoke report: $($latestMarkdown.FullName)"
+    }
+    if ($null -ne $latestJson) {
+        Write-Host "JSON smoke report:     $($latestJson.FullName)"
+        try {
+            $report = Get-Content -Raw -Encoding UTF8 -LiteralPath $latestJson.FullName | ConvertFrom-Json
+            if ($report.PSObject.Properties.Name -contains "failureCategory") {
+                Write-Host "Failure category:      $($report.failureCategory)"
+            }
+            if ($report.PSObject.Properties.Name -contains "skipped") {
+                Write-Host "Skipped:               $($report.skipped)"
+            }
+            if ($report.PSObject.Properties.Name -contains "provider" -and $report.PSObject.Properties.Name -contains "model") {
+                Write-Host "LLM provider/model:    $($report.provider)/$($report.model)"
+            }
+        } catch {
+            Write-Host "Smoke report summary could not be parsed: $($_.Exception.Message)"
+        }
+    }
+}
+
 if ($ReviewMemorySmoke) {
     Write-Host "Running focused Review memory signal benchmark smoke..."
     & mvn "-Dtest=ReviewMemorySignalBenchmarkSmokeTests" test
+    $smokeReportDir = Join-Path (Get-Location) "target/review-memory-signal-benchmark-smoke"
+    Write-LatestReviewMemorySmokeReport -ReportDir $smokeReportDir
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
-    $smokeReportDir = Join-Path (Get-Location) "target/review-memory-signal-benchmark-smoke"
-    if (Test-Path -LiteralPath $smokeReportDir) {
-        $latestJson = Get-ChildItem -LiteralPath $smokeReportDir -Filter "*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        $latestMarkdown = Get-ChildItem -LiteralPath $smokeReportDir -Filter "*.md" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($null -ne $latestMarkdown) {
-            Write-Host "Markdown smoke report: $($latestMarkdown.FullName)"
-        }
-        if ($null -ne $latestJson) {
-            Write-Host "JSON smoke report:     $($latestJson.FullName)"
-        }
+    exit 0
+}
+
+if ($ReviewMemoryRealLlmSmoke) {
+    Write-Host "Running manual real-provider Review memory signal smoke..."
+    & mvn "-Dtest=ReviewMemorySignalRealLlmSmokeManual" test
+    $smokeExitCode = $LASTEXITCODE
+    $smokeReportDir = Join-Path (Get-Location) "target/review-memory-signal-real-llm-smoke"
+    Write-LatestReviewMemorySmokeReport -ReportDir $smokeReportDir
+    if ($smokeExitCode -ne 0) {
+        exit $smokeExitCode
     }
     exit 0
 }
