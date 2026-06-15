@@ -174,6 +174,72 @@ class ReviewMemorySignalRealLlmSmokeManual {
         }
     }
 
+    @Test
+    void failureReportBackfillsContextCoverageFromTraceSummary() throws Exception {
+        Instant now = Instant.now();
+        Project project = new Project(
+                7001L,
+                "review-memory-real-llm-failure-report",
+                projectRoot.toString(),
+                "Java",
+                "Spring Boot",
+                "main",
+                now,
+                now
+        );
+        ObjectNode signal = objectMapper.createObjectNode();
+        signal.put("projectId", project.id());
+        signal.put("reviewId", 7101L);
+        signal.put("issueId", 7201L);
+        signal.put("signalType", "false_positive_pattern");
+        signal.put("feedbackStatus", "false_positive");
+        signal.put("note", "Failure report fixture note.");
+        SeededPriorFeedback prior = new SeededPriorFeedback(7101L, 7201L, signal);
+        String coverageSummary = "sourceCount=2; totalTokenEstimate=321; sourceTypes=[REVIEW_RULES, REVIEW_FEEDBACK_MEMORY]; "
+                + "reviewRules=true; projectProfile=false; projectGraph=false; reviewMemorySignals=true; decisionMemory=false";
+        RunTrace trace = new RunTrace(
+                7301L,
+                "1 false-positive patterns",
+                coverageSummary,
+                "",
+                sourceTypesFromCoverageSummary(coverageSummary)
+        );
+
+        SmokeReport report = writeFailureReport(
+                project,
+                prior,
+                trace,
+                LlmErrorTypes.TIMEOUT,
+                "DeepSeek request timed out",
+                Path.of("target", "review-memory-signal-real-llm-smoke-fixtures")
+        );
+
+        JsonNode json = objectMapper.readTree(report.jsonPath().toFile());
+        assertThat(json.path("failureCategory").asText()).isEqualTo(LlmErrorTypes.TIMEOUT);
+        assertThat(json.path("feedbackLoadedSummary").asText()).isEqualTo("1 false-positive patterns");
+        assertThat(json.path("contextCoverageSummary").asText()).isEqualTo(coverageSummary);
+        assertThat(json.path("contextCoverage").path("sourceCount").asInt()).isEqualTo(2);
+        assertThat(json.path("contextCoverage").path("totalTokenEstimate").asInt()).isEqualTo(321);
+        assertThat(json.path("contextCoverage").path("reviewRules").asBoolean()).isTrue();
+        assertThat(json.path("contextCoverage").path("reviewMemorySignals").asBoolean()).isTrue();
+        assertThat(json.path("contextCoverage").path("sourceTypes"))
+                .extracting(JsonNode::asText)
+                .containsExactly("REVIEW_RULES", "REVIEW_FEEDBACK_MEMORY");
+        assertThat(json.path("sourceTypes"))
+                .extracting(JsonNode::asText)
+                .containsExactly("REVIEW_RULES", "REVIEW_FEEDBACK_MEMORY");
+        assertThat(json.path("smokeOutcome").path("memorySignalLoaded").asBoolean()).isTrue();
+
+        String markdown = Files.readString(report.markdownPath());
+        assertThat(markdown)
+                .contains("- Failure category: `" + LlmErrorTypes.TIMEOUT + "`")
+                .contains("- Context coverage reviewMemorySignals: `true`")
+                .contains("- Context source types: `REVIEW_RULES, REVIEW_FEEDBACK_MEMORY`")
+                .contains("- Feedback memory loaded: `1 false-positive patterns`")
+                .contains("- Context coverage: `" + coverageSummary + "`");
+        assertSmokeReportDoesNotExposeSecrets(report);
+    }
+
     private SeededPriorFeedback seedPriorFalsePositiveFeedback(Project project, String feedbackNote) throws Exception {
         AgentRun run = runService.startRun(project.id(), "REVIEW_MEMORY_REAL_LLM_SMOKE_SEED", "manual-real-llm-smoke-seed");
         Instant createdAt = Instant.now().minusSeconds(5);
@@ -284,7 +350,7 @@ class ReviewMemorySignalRealLlmSmokeManual {
         data.smokeOutcome.put("skipped", true);
         data.smokeOutcome.put("failureCategory", failureCategory);
         data.smokeOutcome.put("failureMessage", failureMessage);
-        return writeSmokeReport(data);
+        return writeSmokeReport(data, defaultReportDir());
     }
 
     private SmokeReport writeFailureReport(
@@ -293,6 +359,17 @@ class ReviewMemorySignalRealLlmSmokeManual {
             RunTrace trace,
             String failureCategory,
             String failureMessage
+    ) throws IOException {
+        return writeFailureReport(project, prior, trace, failureCategory, failureMessage, defaultReportDir());
+    }
+
+    private SmokeReport writeFailureReport(
+            Project project,
+            SeededPriorFeedback prior,
+            RunTrace trace,
+            String failureCategory,
+            String failureMessage,
+            Path reportDir
     ) throws IOException {
         SmokeReportData data = new SmokeReportData(project, provider(), model());
         data.failureCategory = failureCategory;
@@ -310,13 +387,14 @@ class ReviewMemorySignalRealLlmSmokeManual {
         data.feedbackLoadedSummary = trace.feedbackLoadedSummary();
         data.contextCoverageSummary = trace.contextCoverageSummary();
         data.reviewIssuesFilteredSummary = trace.filteredSummary();
-        data.sourceTypes = trace.sourceTypes();
+        data.contextCoverage = contextCoverageFromTrace(trace);
+        data.sourceTypes = jsonTextList(data.contextCoverage.path("sourceTypes"));
         data.smokeOutcome.put("success", false);
         data.smokeOutcome.put("skipped", false);
         data.smokeOutcome.put("memorySignalLoaded", !trace.feedbackLoadedSummary().isBlank());
         data.smokeOutcome.put("failureCategory", failureCategory);
         data.smokeOutcome.put("failureMessage", failureMessage);
-        return writeSmokeReport(data);
+        return writeSmokeReport(data, reportDir);
     }
 
     private SmokeReport writeCompletedReport(
@@ -363,13 +441,16 @@ class ReviewMemorySignalRealLlmSmokeManual {
         data.smokeOutcome.put("filteredByPriorFeedbackCount", filterCounts.filteredByPriorFeedbackCount());
         data.smokeOutcome.put("failureCategory", FAILURE_CATEGORY_NONE);
         data.smokeOutcome.put("laterReviewRetainedIssues", filterCounts.afterIssueCount());
-        return writeSmokeReport(data);
+        return writeSmokeReport(data, defaultReportDir());
     }
 
-    private SmokeReport writeSmokeReport(SmokeReportData data) throws IOException {
+    private Path defaultReportDir() {
+        return Path.of("target", "review-memory-signal-real-llm-smoke");
+    }
+
+    private SmokeReport writeSmokeReport(SmokeReportData data, Path reportDir) throws IOException {
         Instant generatedAt = Instant.now();
         String runId = "review-memory-real-llm-smoke-" + RUN_ID_FORMAT.format(generatedAt);
-        Path reportDir = Path.of("target", "review-memory-signal-real-llm-smoke");
         Files.createDirectories(reportDir);
         Path jsonPath = reportDir.resolve(runId + ".json");
         Path markdownPath = reportDir.resolve(runId + ".md");
@@ -643,6 +724,62 @@ class ReviewMemorySignalRealLlmSmokeManual {
             }
         }
         return values;
+    }
+
+    private JsonNode contextCoverageFromTrace(RunTrace trace) {
+        ObjectNode coverage = emptyCoverageNode();
+        String summary = trace.contextCoverageSummary();
+        if (summary == null || summary.isBlank()) {
+            setSourceTypes(coverage, trace.sourceTypes());
+            return coverage;
+        }
+        coverage.put("sourceCount", intFromCoverageSummary(summary, "sourceCount", 0));
+        coverage.put("totalTokenEstimate", intFromCoverageSummary(summary, "totalTokenEstimate", 0));
+        List<String> parsedSourceTypes = sourceTypesFromCoverageSummary(summary);
+        setSourceTypes(coverage, parsedSourceTypes.isEmpty() ? trace.sourceTypes() : parsedSourceTypes);
+        coverage.put("reviewRules", booleanFromCoverageSummary(summary, "reviewRules"));
+        coverage.put("projectProfile", booleanFromCoverageSummary(summary, "projectProfile"));
+        coverage.put("projectGraph", booleanFromCoverageSummary(summary, "projectGraph"));
+        coverage.put("reviewMemorySignals", booleanFromCoverageSummary(summary, "reviewMemorySignals"));
+        coverage.put("decisionMemory", booleanFromCoverageSummary(summary, "decisionMemory"));
+        return coverage;
+    }
+
+    private void setSourceTypes(ObjectNode coverage, List<String> sourceTypes) {
+        ArrayNode values = objectMapper.createArrayNode();
+        for (String sourceType : sourceTypes) {
+            if (sourceType != null && !sourceType.isBlank()) {
+                values.add(sourceType);
+            }
+        }
+        coverage.set("sourceTypes", values);
+    }
+
+    private int intFromCoverageSummary(String summary, String key, int fallback) {
+        String value = coverageValue(summary, key);
+        if (value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private boolean booleanFromCoverageSummary(String summary, String key) {
+        return Boolean.parseBoolean(coverageValue(summary, key));
+    }
+
+    private String coverageValue(String summary, String key) {
+        for (String part : summary.split(";")) {
+            String trimmed = part.trim();
+            String prefix = key + "=";
+            if (trimmed.startsWith(prefix)) {
+                return trimmed.substring(prefix.length()).trim();
+            }
+        }
+        return "";
     }
 
     private List<String> jsonTextList(JsonNode values) {
