@@ -2,13 +2,21 @@ package com.devcontext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.devcontext.adapters.llm.MockLlmClient;
+import com.devcontext.application.llm.LlmConnectionCheckApplicationService;
+import com.devcontext.application.llm.LlmErrorTypes;
 import com.devcontext.application.llm.LocalLlmSettingsStore;
 import com.devcontext.application.llm.LlmRuntimeStatus;
 import com.devcontext.application.llm.LlmSettingsApplicationService;
+import com.devcontext.common.error.ApiException;
 import com.devcontext.config.DevContextLlmProperties;
+import com.devcontext.domain.llm.LlmRequest;
+import com.devcontext.domain.llm.LlmResponse;
+import com.devcontext.ports.llm.LlmClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -16,12 +24,17 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -43,9 +56,13 @@ class LlmSettingsControllerTests {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private StubConnectionCheckLlmClient connectionCheckLlmClient;
+
     @BeforeEach
     void cleanLocalConfig() throws IOException {
         deleteRecursively(LOCAL_CONFIG_ROOT);
+        connectionCheckLlmClient.reset();
     }
 
     @Test
@@ -187,6 +204,122 @@ class LlmSettingsControllerTests {
     }
 
     @Test
+    void testsConfiguredProviderConnectionWithoutReturningApiKeys() throws Exception {
+        String response = mockMvc.perform(post("/api/settings/llm/test"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(response).doesNotContain("gemini-secret-for-test");
+
+        JsonNode data = objectMapper.readTree(response).path("data");
+        assertThat(data.path("provider").asText()).isEqualTo("gemini");
+        assertThat(data.path("model").asText()).isEqualTo("gemini-test-model");
+        assertThat(data.path("success").asBoolean()).isTrue();
+        assertThat(data.path("failureCategory").asText()).isEqualTo("none");
+        assertThat(data.path("messageSummary").asText()).contains("succeeded");
+        assertThat(data.path("keyConfigured").asBoolean()).isTrue();
+        assertThat(data.path("keyStatus").asText()).isEqualTo("configured");
+        assertThat(connectionCheckLlmClient.lastRequest().modelName()).isEqualTo("gemini-test-model");
+    }
+
+    @Test
+    void classifiesConnectionCheckFailureWithoutReturningApiKeys() throws Exception {
+        connectionCheckLlmClient.failWith(new ApiException(
+                LlmErrorTypes.AUTH_FAILED,
+                "Invalid API key gemini-secret-for-test",
+                HttpStatus.UNAUTHORIZED
+        ));
+
+        String response = mockMvc.perform(post("/api/settings/llm/test"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(response).doesNotContain("gemini-secret-for-test");
+
+        JsonNode data = objectMapper.readTree(response).path("data");
+        assertThat(data.path("provider").asText()).isEqualTo("gemini");
+        assertThat(data.path("model").asText()).isEqualTo("gemini-test-model");
+        assertThat(data.path("success").asBoolean()).isFalse();
+        assertThat(data.path("failureCategory").asText()).isEqualTo(LlmErrorTypes.AUTH_FAILED);
+        assertThat(data.path("messageSummary").asText()).contains("[masked]");
+        assertThat(data.path("keyConfigured").asBoolean()).isTrue();
+        assertThat(data.path("keyStatus").asText()).isEqualTo("configured");
+    }
+
+    @Test
+    void connectionCheckPassesForMockProviderWithoutKey() throws IOException {
+        DevContextLlmProperties properties = new DevContextLlmProperties(
+                "mock",
+                new DevContextLlmProperties.Mock("mock-test-model"),
+                null,
+                null
+        );
+        Path serviceRoot = Path.of("target/llm-settings-mock-connection-test");
+        deleteRecursively(serviceRoot);
+        LlmRuntimeStatus runtimeStatus = new LlmRuntimeStatus();
+        LlmSettingsApplicationService settingsService = new LlmSettingsApplicationService(
+                properties,
+                runtimeStatus,
+                new LocalLlmSettingsStore(serviceRoot.toString())
+        );
+        LlmConnectionCheckApplicationService connectionCheckService = new LlmConnectionCheckApplicationService(
+                settingsService,
+                new MockLlmClient(runtimeStatus),
+                properties
+        );
+
+        LlmConnectionCheckApplicationService.LlmConnectionCheckResult result = connectionCheckService.testConnection();
+
+        assertThat(result.provider()).isEqualTo("mock");
+        assertThat(result.model()).isEqualTo("mock-test-model");
+        assertThat(result.success()).isTrue();
+        assertThat(result.failureCategory()).isEqualTo("none");
+        assertThat(result.keyConfigured()).isFalse();
+        assertThat(result.keyStatus()).isEqualTo("not_required");
+    }
+
+    @Test
+    void connectionCheckClassifiesMissingRealProviderKeyWithoutCallingClient() throws IOException {
+        DevContextLlmProperties properties = new DevContextLlmProperties(
+                "gemini",
+                null,
+                new DevContextLlmProperties.Gemini(null, "gemini-test-model", null, null),
+                null
+        );
+        Path serviceRoot = Path.of("target/llm-settings-missing-key-connection-test");
+        deleteRecursively(serviceRoot);
+        LlmRuntimeStatus runtimeStatus = new LlmRuntimeStatus();
+        LlmSettingsApplicationService settingsService = new LlmSettingsApplicationService(
+                properties,
+                runtimeStatus,
+                new LocalLlmSettingsStore(serviceRoot.toString())
+        );
+        AtomicBoolean called = new AtomicBoolean(false);
+        LlmClient failingClient = request -> {
+            called.set(true);
+            throw new IllegalStateException("should not call provider without a key");
+        };
+        LlmConnectionCheckApplicationService connectionCheckService = new LlmConnectionCheckApplicationService(
+                settingsService,
+                failingClient,
+                properties
+        );
+
+        LlmConnectionCheckApplicationService.LlmConnectionCheckResult result = connectionCheckService.testConnection();
+
+        assertThat(called.get()).isFalse();
+        assertThat(result.provider()).isEqualTo("gemini");
+        assertThat(result.success()).isFalse();
+        assertThat(result.failureCategory()).isEqualTo(LlmErrorTypes.PROVIDER_NOT_CONFIGURED);
+        assertThat(result.keyConfigured()).isFalse();
+        assertThat(result.keyStatus()).isEqualTo("missing");
+    }
+
+    @Test
     void computesDeepSeekStatusWithoutExposingSecrets() throws IOException {
         DevContextLlmProperties properties = new DevContextLlmProperties(
                 "deepseek",
@@ -224,6 +357,44 @@ class LlmSettingsControllerTests {
             });
         } catch (UncheckedIOException exception) {
             throw exception.getCause();
+        }
+    }
+
+    @TestConfiguration
+    static class ConnectionCheckTestConfig {
+
+        @Bean
+        @Primary
+        StubConnectionCheckLlmClient connectionCheckLlmClient() {
+            return new StubConnectionCheckLlmClient();
+        }
+    }
+
+    static class StubConnectionCheckLlmClient implements LlmClient {
+
+        private RuntimeException failure;
+        private LlmRequest lastRequest;
+
+        @Override
+        public LlmResponse chat(LlmRequest request) {
+            lastRequest = request;
+            if (failure != null) {
+                throw failure;
+            }
+            return new LlmResponse("OK", request.modelName(), 1, 1);
+        }
+
+        void failWith(RuntimeException failure) {
+            this.failure = failure;
+        }
+
+        LlmRequest lastRequest() {
+            return lastRequest;
+        }
+
+        void reset() {
+            failure = null;
+            lastRequest = null;
         }
     }
 }
