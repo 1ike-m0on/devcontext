@@ -42,6 +42,14 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import(ReviewMemorySignalBenchmarkSmokeTests.TestLlmConfig.class)
 class ReviewMemorySignalBenchmarkSmokeTests {
 
+    private static final String REPORT_SCHEMA = "review-memory-signal-smoke";
+    private static final int REPORT_VERSION = 1;
+    private static final String SUITE = "review-memory-signal-benchmark-smoke";
+    private static final String CASE_NAME = "false-positive-suppression-memory";
+    private static final String MODE = "strict";
+    private static final String PROVIDER = "test";
+    private static final String MODEL = "mock-llm";
+    private static final String FAILURE_CATEGORY_NONE = "none";
     private static final DateTimeFormatter RUN_ID_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
 
@@ -93,6 +101,8 @@ class ReviewMemorySignalBenchmarkSmokeTests {
         String feedbackLoadedSummary = eventOutput(secondEvents.path("events"), "REVIEW_FEEDBACK_MEMORY_LOADED");
         String coverageSummary = eventOutput(secondEvents.path("events"), "REVIEW_CONTEXT_COVERAGE_RECORDED");
         String filteredSummary = eventOutput(secondEvents.path("events"), "REVIEW_ISSUES_FILTERED");
+        int beforeIssueCount = firstDetail.path("issues").size();
+        int afterIssueCount = secondDetail.path("issues").size();
 
         assertThat(secondCreate.path("reviewMemorySignals")).hasSize(1);
         assertThat(signal.path("signalType").asText()).isEqualTo("false_positive_pattern");
@@ -105,7 +115,8 @@ class ReviewMemorySignalBenchmarkSmokeTests {
         assertThat(secondCreate.path("contextCoverage").path("sourceTypes"))
                 .extracting(JsonNode::asText)
                 .contains("REVIEW_FEEDBACK_MEMORY");
-        assertThat(secondDetail.path("issues")).isEmpty();
+        assertThat(beforeIssueCount).isEqualTo(1);
+        assertThat(afterIssueCount).isZero();
         assertThat(secondDetail.path("reviewMemorySignals")).hasSize(1);
         assertThat(secondEvents.path("reviewMemorySignals")).hasSize(1);
         assertThat(feedbackLoadedSummary).contains("1 false-positive patterns");
@@ -117,11 +128,13 @@ class ReviewMemorySignalBenchmarkSmokeTests {
         assertThat(secondDetail.path("outcomeSummary").path("pending").asInt()).isZero();
         assertThat(llmClient.lastRequest().get().prompt()).contains(feedbackNote);
 
-        writeSmokeReport(
+        SmokeReport report = writeSmokeReport(
                 project,
                 firstReviewId,
                 issueId,
                 secondReviewId,
+                beforeIssueCount,
+                afterIssueCount,
                 secondCreate,
                 secondDetail,
                 signal,
@@ -129,6 +142,7 @@ class ReviewMemorySignalBenchmarkSmokeTests {
                 coverageSummary,
                 filteredSummary
         );
+        assertSmokeReportContract(report, project, firstReviewId, issueId, secondReviewId, beforeIssueCount, afterIssueCount);
     }
 
     private JsonNode createReview(long projectId, String compareBranch, String diffText) throws Exception {
@@ -189,11 +203,13 @@ class ReviewMemorySignalBenchmarkSmokeTests {
         return "";
     }
 
-    private void writeSmokeReport(
+    private SmokeReport writeSmokeReport(
             Project project,
             long firstReviewId,
             long issueId,
             long secondReviewId,
+            int beforeIssueCount,
+            int afterIssueCount,
             JsonNode secondCreate,
             JsonNode secondDetail,
             JsonNode signal,
@@ -201,48 +217,87 @@ class ReviewMemorySignalBenchmarkSmokeTests {
             String coverageSummary,
             String filteredSummary
     ) throws IOException {
-        String runId = "review-memory-signal-smoke-" + RUN_ID_FORMAT.format(Instant.now());
+        Instant generatedAt = Instant.now();
+        String runId = "review-memory-signal-smoke-" + RUN_ID_FORMAT.format(generatedAt);
         Path reportDir = Path.of("target", "review-memory-signal-benchmark-smoke");
         Files.createDirectories(reportDir);
         Path jsonPath = reportDir.resolve(runId + ".json");
         Path markdownPath = reportDir.resolve(runId + ".md");
 
         Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("schema", REPORT_SCHEMA);
+        payload.put("version", REPORT_VERSION);
         payload.put("runId", runId);
-        payload.put("generatedAt", Instant.now().toString());
-        payload.put("suite", "review-memory-signal-benchmark-smoke");
-        payload.put("provider", "test");
-        payload.put("model", "mock-llm");
+        payload.put("runTimestamp", generatedAt.toString());
+        payload.put("generatedAt", generatedAt.toString());
+        payload.put("suite", SUITE);
+        payload.put("mode", MODE);
+        payload.put("provider", PROVIDER);
+        payload.put("model", MODEL);
+        payload.put("caseName", CASE_NAME);
         payload.put("harnessNote", "Focused offline Spring smoke because the PowerShell benchmark harness uses mock LLM echo responses and cannot seed stateful ReviewIssue feedback by itself.");
+        payload.put("projectName", project.name());
         payload.put("projectId", project.id());
         payload.put("projectRoot", project.rootPath());
         payload.put("priorReviewId", firstReviewId);
         payload.put("priorIssueId", issueId);
         payload.put("laterReviewId", secondReviewId);
         payload.put("signalCount", secondCreate.path("reviewMemorySignals").size());
+        payload.put("memorySignalType", signal.path("signalType").asText());
+        payload.put("memorySignalStatus", signal.path("feedbackStatus").asText());
+        payload.put("memorySignalSourceProjectId", signal.path("projectId").asLong());
+        payload.put("memorySignalSourceReviewId", signal.path("reviewId").asLong());
+        payload.put("memorySignalSourceIssueId", signal.path("issueId").asLong());
         payload.put("contextCoverage", secondCreate.path("contextCoverage"));
         payload.put("sourceTypes", secondCreate.path("contextCoverage").path("sourceTypes"));
         payload.put("memorySignal", signal);
-        payload.put("laterIssueCount", secondDetail.path("issues").size());
+        payload.put("beforeIssueCount", beforeIssueCount);
+        payload.put("afterIssueCount", afterIssueCount);
+        payload.put("laterIssueCount", afterIssueCount);
         payload.put("laterOutcomeSummary", secondDetail.path("outcomeSummary"));
         payload.put("feedbackLoadedSummary", feedbackLoadedSummary);
         payload.put("contextCoverageSummary", coverageSummary);
         payload.put("reviewIssuesFilteredSummary", filteredSummary);
+        payload.put("filteredByPriorFeedback", true);
+        payload.put("filteredByPriorFeedbackCount", beforeIssueCount - afterIssueCount);
+        payload.put("failureCategory", FAILURE_CATEGORY_NONE);
         payload.put("smokeOutcome", Map.of(
                 "success", true,
                 "memorySignalLoaded", true,
                 "suppressionAffectedLaterReview", true,
-                "laterReviewRetainedIssues", secondDetail.path("issues").size()
+                "beforeIssueCount", beforeIssueCount,
+                "afterIssueCount", afterIssueCount,
+                "filteredByPriorFeedback", true,
+                "filteredByPriorFeedbackCount", beforeIssueCount - afterIssueCount,
+                "failureCategory", FAILURE_CATEGORY_NONE,
+                "laterReviewRetainedIssues", afterIssueCount
         ));
         objectMapper.writerWithDefaultPrettyPrinter().writeValue(jsonPath.toFile(), payload);
 
         Files.writeString(markdownPath, """
                 # Review Memory Signal Benchmark Smoke
 
+                ## Contract Summary
+
+                - Schema: `%s`
+                - Version: `%d`
+                - Suite: `%s`
+                - Mode: `%s`
+                - Provider: `%s`
+                - Model: `%s`
+                - Run timestamp: `%s`
+                - Project: `%s`
+                - Case: `%s`
+                - Failure category: `%s`
+
                 ## Outcome
 
                 - Success: `true`
                 - Smoke path: prior `false_positive` feedback memory signal -> later Review
+                - Filtered by prior feedback: `true`
+                - Filtered by prior feedback count: `%d`
+                - Before issue count: `%d`
+                - After issue count: `%d`
                 - Prior Review: `%d`
                 - Prior Issue: `%d`
                 - Later Review: `%d`
@@ -255,6 +310,9 @@ class ReviewMemorySignalBenchmarkSmokeTests {
 
                 - Signal type: `%s`
                 - Feedback status: `%s`
+                - Source project id: `%d`
+                - Source review id: `%d`
+                - Source issue id: `%d`
                 - Human note: `%s`
 
                 ## Trace Evidence
@@ -267,20 +325,95 @@ class ReviewMemorySignalBenchmarkSmokeTests {
 
                 The regular PowerShell CodeReview benchmark harness stays stateless. This focused offline Spring smoke writes JSON and Markdown benchmark artifacts while exercising the existing Review create, feedback PATCH, detail, and event APIs.
                 """.formatted(
+                REPORT_SCHEMA,
+                REPORT_VERSION,
+                SUITE,
+                MODE,
+                PROVIDER,
+                MODEL,
+                generatedAt,
+                project.name(),
+                CASE_NAME,
+                FAILURE_CATEGORY_NONE,
+                beforeIssueCount - afterIssueCount,
+                beforeIssueCount,
+                afterIssueCount,
                 firstReviewId,
                 issueId,
                 secondReviewId,
                 secondCreate.path("reviewMemorySignals").size(),
-                secondDetail.path("issues").size(),
+                afterIssueCount,
                 secondCreate.path("contextCoverage").path("reviewMemorySignals").asBoolean(),
                 joinText(secondCreate.path("contextCoverage").path("sourceTypes")),
                 signal.path("signalType").asText(),
                 signal.path("feedbackStatus").asText(),
+                signal.path("projectId").asLong(),
+                signal.path("reviewId").asLong(),
+                signal.path("issueId").asLong(),
                 signal.path("note").asText(),
                 feedbackLoadedSummary,
                 coverageSummary,
                 filteredSummary
         ));
+        return new SmokeReport(jsonPath, markdownPath);
+    }
+
+    private void assertSmokeReportContract(
+            SmokeReport report,
+            Project project,
+            long firstReviewId,
+            long issueId,
+            long secondReviewId,
+            int beforeIssueCount,
+            int afterIssueCount
+    ) throws IOException {
+        JsonNode json = objectMapper.readTree(report.jsonPath().toFile());
+        assertThat(json.path("schema").asText()).isEqualTo(REPORT_SCHEMA);
+        assertThat(json.path("version").asInt()).isEqualTo(REPORT_VERSION);
+        assertThat(json.path("suite").asText()).isEqualTo(SUITE);
+        assertThat(json.path("mode").asText()).isEqualTo(MODE);
+        assertThat(json.path("provider").asText()).isEqualTo(PROVIDER);
+        assertThat(json.path("model").asText()).isEqualTo(MODEL);
+        assertThat(json.path("runTimestamp").asText()).isNotBlank();
+        assertThat(json.path("projectName").asText()).isEqualTo(project.name());
+        assertThat(json.path("caseName").asText()).isEqualTo(CASE_NAME);
+        assertThat(json.path("memorySignalType").asText()).isEqualTo("false_positive_pattern");
+        assertThat(json.path("memorySignalStatus").asText()).isEqualTo("false_positive");
+        assertThat(json.path("memorySignalSourceProjectId").asLong()).isEqualTo(project.id());
+        assertThat(json.path("memorySignalSourceReviewId").asLong()).isEqualTo(firstReviewId);
+        assertThat(json.path("memorySignalSourceIssueId").asLong()).isEqualTo(issueId);
+        assertThat(json.path("contextCoverage").path("reviewMemorySignals").asBoolean()).isTrue();
+        assertThat(json.path("sourceTypes")).extracting(JsonNode::asText).contains("REVIEW_FEEDBACK_MEMORY");
+        assertThat(json.path("beforeIssueCount").asInt()).isEqualTo(beforeIssueCount);
+        assertThat(json.path("afterIssueCount").asInt()).isEqualTo(afterIssueCount);
+        assertThat(json.path("filteredByPriorFeedback").asBoolean()).isTrue();
+        assertThat(json.path("filteredByPriorFeedbackCount").asInt()).isEqualTo(beforeIssueCount - afterIssueCount);
+        assertThat(json.path("failureCategory").asText()).isEqualTo(FAILURE_CATEGORY_NONE);
+        assertThat(json.path("laterReviewId").asLong()).isEqualTo(secondReviewId);
+
+        String markdown = Files.readString(report.markdownPath());
+        assertThat(markdown)
+                .contains("## Contract Summary")
+                .contains("- Schema: `" + REPORT_SCHEMA + "`")
+                .contains("- Version: `" + REPORT_VERSION + "`")
+                .contains("- Suite: `" + SUITE + "`")
+                .contains("- Mode: `" + MODE + "`")
+                .contains("- Provider: `" + PROVIDER + "`")
+                .contains("- Model: `" + MODEL + "`")
+                .contains("- Run timestamp: `")
+                .contains("- Project: `" + project.name() + "`")
+                .contains("- Case: `" + CASE_NAME + "`")
+                .contains("- Failure category: `" + FAILURE_CATEGORY_NONE + "`")
+                .contains("- Signal type: `false_positive_pattern`")
+                .contains("- Feedback status: `false_positive`")
+                .contains("- Source project id: `" + project.id() + "`")
+                .contains("- Source review id: `" + firstReviewId + "`")
+                .contains("- Source issue id: `" + issueId + "`")
+                .contains("- Before issue count: `" + beforeIssueCount + "`")
+                .contains("- After issue count: `" + afterIssueCount + "`")
+                .contains("- Filtered by prior feedback: `true`")
+                .contains("- Context coverage reviewMemorySignals: `true`")
+                .contains("REVIEW_FEEDBACK_MEMORY");
     }
 
     private String joinText(JsonNode values) {
@@ -313,6 +446,9 @@ class ReviewMemorySignalBenchmarkSmokeTests {
 
     private String escapeJson(String value) throws IOException {
         return objectMapper.writeValueAsString(value).replaceFirst("^\"", "").replaceFirst("\"$", "");
+    }
+
+    private record SmokeReport(Path jsonPath, Path markdownPath) {
     }
 
     @TestConfiguration
