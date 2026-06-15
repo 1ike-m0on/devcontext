@@ -1,11 +1,14 @@
 package com.devcontext.adapters.web;
 
+import com.devcontext.application.llm.LlmConnectionCheckApplicationService;
+import com.devcontext.application.llm.LlmConnectionCheckApplicationService.LlmConnectionCheckResult;
 import com.devcontext.application.llm.LlmSettingsApplicationService;
 import com.devcontext.application.llm.LlmSettingsApplicationService.LlmSettingsStatus;
 import com.devcontext.common.api.ApiResponse;
 import com.devcontext.common.error.ApiException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,9 +19,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class LlmSettingsController {
 
     private final LlmSettingsApplicationService settingsService;
+    private final LlmConnectionCheckApplicationService connectionCheckService;
 
-    public LlmSettingsController(LlmSettingsApplicationService settingsService) {
+    public LlmSettingsController(
+            LlmSettingsApplicationService settingsService,
+            LlmConnectionCheckApplicationService connectionCheckService
+    ) {
         this.settingsService = settingsService;
+        this.connectionCheckService = connectionCheckService;
     }
 
     @GetMapping
@@ -34,6 +42,11 @@ public class LlmSettingsController {
         } catch (IllegalArgumentException exception) {
             throw new ApiException("INVALID_LLM_SETTINGS", exception.getMessage(), HttpStatus.BAD_REQUEST);
         }
+    }
+
+    @PostMapping("/test")
+    public ApiResponse<LlmConnectionCheckResult> testConnection() {
+        return ApiResponse.ok(connectionCheckService.testConnection());
     }
 
     public record LlmSettingsUpdateRequest(
