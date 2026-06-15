@@ -65,6 +65,16 @@ export type LlmSettingsUpdate = {
   deepseekApiKey?: string | null;
 };
 
+export type LlmConnectionCheckResult = {
+  provider: string;
+  model: string;
+  success: boolean;
+  failureCategory: string;
+  messageSummary: string;
+  keyConfigured: boolean;
+  keyStatus: string;
+};
+
 export type Project = {
   id: number;
   name: string;
@@ -390,6 +400,7 @@ export const api = {
   llmSettings: () => request<LlmSettings>("/api/settings/llm"),
   updateLlmSettings: (body: LlmSettingsUpdate) =>
     request<LlmSettings>("/api/settings/llm", { method: "PUT", body: JSON.stringify(body) }),
+  testLlmConnection: () => request<LlmConnectionCheckResult>("/api/settings/llm/test", { method: "POST" }),
   projects: () => request<Project[]>("/api/projects"),
   createProject: (body: { name: string; rootPath: string; defaultBranch: string }) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
