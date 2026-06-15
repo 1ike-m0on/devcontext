@@ -11,6 +11,7 @@ param(
     [int]$CaseLimit = 0,
     [string]$OutputDir = "docs/reports",
     [switch]$ListCases,
+    [switch]$ReviewMemorySmoke,
     [switch]$Help
 )
 
@@ -43,10 +44,15 @@ Common options:
   -TimeoutSeconds 90
   -RetryCount 1
   -OutputDir docs/reports
+  -ReviewMemorySmoke
 
 The script creates a temporary benchmark project, submits fixed diff fixtures to
 the AI Code Review API, evaluates ReviewIssue quality, and writes Markdown/JSON
 reports under docs/reports.
+
+Use -ReviewMemorySmoke to run the focused offline Review memory signal smoke.
+That smoke exercises a stateful prior false_positive feedback flow through the
+Spring test harness and writes JSON/Markdown artifacts under target.
 
 Use -ListCases to inspect the selected fixture set without requiring the
 DevContext service or an LLM provider.
@@ -55,6 +61,26 @@ DevContext service or an LLM provider.
 }
 
 . (Join-Path $PSScriptRoot "devcontext-report-metadata.ps1")
+
+if ($ReviewMemorySmoke) {
+    Write-Host "Running focused Review memory signal benchmark smoke..."
+    & mvn "-Dtest=ReviewMemorySignalBenchmarkSmokeTests" test
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    $smokeReportDir = Join-Path (Get-Location) "target/review-memory-signal-benchmark-smoke"
+    if (Test-Path -LiteralPath $smokeReportDir) {
+        $latestJson = Get-ChildItem -LiteralPath $smokeReportDir -Filter "*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $latestMarkdown = Get-ChildItem -LiteralPath $smokeReportDir -Filter "*.md" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($null -ne $latestMarkdown) {
+            Write-Host "Markdown smoke report: $($latestMarkdown.FullName)"
+        }
+        if ($null -ne $latestJson) {
+            Write-Host "JSON smoke report:     $($latestJson.FullName)"
+        }
+    }
+    exit 0
+}
 
 function New-RunId {
     return (Get-Date).ToString("yyyyMMdd-HHmmss")
