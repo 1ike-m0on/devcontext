@@ -41,6 +41,7 @@ import {
   KnowledgeQueryPlan,
   KnowledgeSearchResponse,
   KnowledgeSource,
+  LlmConnectionCheckResult,
   LlmProviderStatus,
   LlmSettings,
   Project,
@@ -2527,6 +2528,7 @@ function SettingsWorkspace({
   const [model, setModel] = useState(pendingOrActive?.model ?? "mock-llm");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
+  const [connectionCheckResult, setConnectionCheckResult] = useState<LlmConnectionCheckResult | null>(null);
 
   useEffect(() => {
     const next = settings?.pending ?? settings;
@@ -2538,6 +2540,7 @@ function SettingsWorkspace({
   const selectedProvider = providers.find((item) => item.provider === provider) ?? providers[0];
 
   function selectProvider(nextProvider: string) {
+    setConnectionCheckResult(null);
     setProvider(nextProvider);
     const nextStatus = providers.find((item) => item.provider === nextProvider);
     setModel(nextStatus?.model ?? "mock-llm");
@@ -2565,6 +2568,7 @@ function SettingsWorkspace({
     onSuccess: (result) => {
       setGeminiApiKey("");
       setDeepseekApiKey("");
+      setConnectionCheckResult(null);
       void queryClient.invalidateQueries({ queryKey: ["llm-settings"] });
       void queryClient.invalidateQueries({ queryKey: ["health"] });
       onNotice(result.restartRequired
@@ -2572,6 +2576,28 @@ function SettingsWorkspace({
         : "LLM 设置已保存，当前配置已一致。");
     },
     onError: (error) => onNotice(error instanceof Error ? error.message : "LLM 设置保存失败。"),
+  });
+
+  const testConnection = useMutation({
+    mutationFn: api.testLlmConnection,
+    onMutate: () => {
+      setConnectionCheckResult(null);
+    },
+    onSuccess: (result) => {
+      setConnectionCheckResult(result);
+    },
+    onError: (error) => {
+      const message = sanitizeConnectionCheckMessage(error instanceof Error ? error.message : "LLM provider connection check request failed.");
+      setConnectionCheckResult({
+        provider: settings?.provider ?? provider,
+        model: settings?.model ?? (model.trim() || "-"),
+        success: false,
+        failureCategory: classifyConnectionCheckRequestError(message),
+        messageSummary: message,
+        keyConfigured: settings?.keyConfigured ?? false,
+        keyStatus: settings?.keyStatus ?? "unknown",
+      });
+    },
   });
 
   return (
@@ -2618,7 +2644,15 @@ function SettingsWorkspace({
                     </Label>
                     <Label>
                       Model
-                      <Input className="mt-1" value={model} onChange={(event) => setModel(event.target.value)} placeholder={selectedProvider?.model ?? "model"} />
+                      <Input
+                        className="mt-1"
+                        value={model}
+                        onChange={(event) => {
+                          setConnectionCheckResult(null);
+                          setModel(event.target.value);
+                        }}
+                        placeholder={selectedProvider?.model ?? "model"}
+                      />
                     </Label>
                   </div>
 
@@ -2629,7 +2663,10 @@ function SettingsWorkspace({
                         className="mt-1"
                         type="password"
                         value={geminiApiKey}
-                        onChange={(event) => setGeminiApiKey(event.target.value)}
+                        onChange={(event) => {
+                          setConnectionCheckResult(null);
+                          setGeminiApiKey(event.target.value);
+                        }}
                         placeholder="留空则不改 key"
                         autoComplete="off"
                       />
@@ -2640,7 +2677,10 @@ function SettingsWorkspace({
                         className="mt-1"
                         type="password"
                         value={deepseekApiKey}
-                        onChange={(event) => setDeepseekApiKey(event.target.value)}
+                        onChange={(event) => {
+                          setConnectionCheckResult(null);
+                          setDeepseekApiKey(event.target.value);
+                        }}
                         placeholder="留空则不改 key"
                         autoComplete="off"
                       />
@@ -2654,11 +2694,21 @@ function SettingsWorkspace({
                         key {selectedProvider?.keyStatus ?? "unknown"}
                       </Badge>
                     </div>
-                    <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || !model.trim()}>
-                      {saveSettings.isPending ? <Loader2 className="size-4 animate-spin" /> : <Settings2 className="size-4" />}
-                      保存设置
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="secondary" onClick={() => testConnection.mutate()} disabled={testConnection.isPending || loading}>
+                        {testConnection.isPending ? <Loader2 className="size-4 animate-spin" /> : <Activity className="size-4" />}
+                        测试连接
+                      </Button>
+                      <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || !model.trim()}>
+                        {saveSettings.isPending ? <Loader2 className="size-4 animate-spin" /> : <Settings2 className="size-4" />}
+                        保存设置
+                      </Button>
+                    </div>
                   </div>
+
+                  {testConnection.isPending || connectionCheckResult ? (
+                    <LlmConnectionCheckResultPanel result={connectionCheckResult} loading={testConnection.isPending} />
+                  ) : null}
                 </div>
               </>
             )}
@@ -2720,6 +2770,54 @@ function SettingsWorkspace({
   );
 }
 
+function LlmConnectionCheckResultPanel({
+  result,
+  loading,
+}: {
+  result: LlmConnectionCheckResult | null;
+  loading: boolean;
+}) {
+  const success = Boolean(result?.success);
+  const variant: BadgeVariant = loading ? "secondary" : success ? "success" : "danger";
+  const borderClass = loading
+    ? "border-border bg-muted/30"
+    : success
+      ? "border-emerald-400/25 bg-emerald-400/10"
+      : "border-red-400/25 bg-red-400/10";
+
+  return (
+    <div className={cn("rounded-md border p-3", borderClass)}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {loading ? (
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          ) : success ? (
+            <CheckCircle2 className="size-4 text-emerald-200" />
+          ) : (
+            <AlertTriangle className="size-4 text-red-200" />
+          )}
+          连接测试
+        </div>
+        <Badge variant={variant}>{loading ? "running" : success ? "success" : "failure"}</Badge>
+      </div>
+
+      {loading ? (
+        <p className="mt-3 text-sm text-muted-foreground">正在检查当前 LLM provider。</p>
+      ) : result ? (
+        <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
+          <StateLine label="provider" value={result.provider || "-"} />
+          <StateLine label="model" value={result.model || "-"} />
+          <StateLine label="success" value={result.success ? "true" : "false"} />
+          <StateLine label="failureCategory" value={result.failureCategory || "-"} />
+          <StateLine label="message" value={result.messageSummary || "-"} />
+          <StateLine label="keyStatus" value={result.keyStatus || "unknown"} />
+          <StateLine label="keyConfigured" value={result.keyConfigured ? "true" : "false"} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function defaultLlmProviders(): LlmProviderStatus[] {
   return [
     { provider: "mock", model: "mock-llm", status: "ready", keyRequired: false, keyConfigured: false, keyStatus: "not_required" },
@@ -2742,6 +2840,35 @@ function llmStatusBadge(status?: string): BadgeVariant {
   if (status === "missing_key") return "warning";
   if (status === "unsupported_provider" || status === "failed") return "danger";
   return "secondary";
+}
+
+function sanitizeConnectionCheckMessage(message: string) {
+  const safe = (message || "LLM provider connection check request failed.")
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s,;]+/gi, "$1[masked]")
+    .replace(/(api[-_ ]?key\s*[:=]\s*)[^\s,;}]+/gi, "$1[masked]")
+    .replace(/AIza[0-9A-Za-z_-]{16,}/gi, "[masked]")
+    .replace(/sk-[0-9A-Za-z_-]{16,}/gi, "[masked]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return safe.length > 300 ? safe.slice(0, 300) : safe;
+}
+
+function classifyConnectionCheckRequestError(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("timeout") || normalized.includes("timed out") || normalized.includes("abort")) return "LLM_TIMEOUT";
+  if (normalized.includes("auth") || normalized.includes("unauthorized") || normalized.includes("forbidden") || normalized.includes("401") || normalized.includes("403")) {
+    return "LLM_AUTH_FAILED";
+  }
+  if (normalized.includes("quota") || normalized.includes("rate limit") || normalized.includes("billing") || normalized.includes("429")) return "LLM_QUOTA_EXCEEDED";
+  if (normalized.includes("parse") || normalized.includes("json")) return "LLM_PARSE_FAILED";
+  if (normalized.includes("proxy")) return "LLM_PROXY_REQUIRED";
+  if (normalized.includes("network") || normalized.includes("fetch") || normalized.includes("connection") || normalized.includes("dns") || normalized.includes("resolve")) {
+    return "LLM_NETWORK_FAILED";
+  }
+  if (normalized.includes("not configured") || normalized.includes("missing key") || normalized.includes("unsupported provider")) {
+    return "LLM_PROVIDER_NOT_CONFIGURED";
+  }
+  return "unknown";
 }
 
 function RunWorkspace({ initialRunId, project }: { initialRunId: number | null; project: Project | null }) {
