@@ -6,6 +6,7 @@ import com.devcontext.domain.knowledge.RetrievalRecord;
 import com.devcontext.domain.memory.Observation;
 import com.devcontext.domain.memory.ObservationLifecycle;
 import com.devcontext.domain.memory.ObservationSourceType;
+import com.devcontext.domain.memory.ReportObservationSnapshot;
 import com.devcontext.domain.review.ReviewIssue;
 import com.devcontext.domain.review.ReviewRecord;
 import com.devcontext.domain.run.AgentEvent;
@@ -303,9 +304,124 @@ public class ObservationMapper {
         );
     }
 
+    public Observation fromReport(ReportObservationSnapshot report) {
+        if (report == null) {
+            throw new IllegalArgumentException("report observation snapshot is required");
+        }
+        Instant generatedAt = report.generatedAt() == null ? Instant.now() : report.generatedAt();
+        String reportRunId = firstNonBlank(report.reportRunId(), "report-" + generatedAt.toEpochMilli());
+        String suite = firstNonBlank(report.suite(), "report-artifact");
+        String reportType = firstNonBlank(report.reportType(), suite);
+        String taskType = firstNonBlank(report.taskType(), "REPORT_ARTIFACT");
+        String status = firstNonBlank(report.status(), "completed");
+        String failureCategory = firstNonBlank(report.failureCategory(), "none");
+        boolean failed = !"none".equalsIgnoreCase(failureCategory)
+                && !"success".equalsIgnoreCase(failureCategory)
+                && !"ok".equalsIgnoreCase(failureCategory);
+        Map<String, Object> metadata = metadata(
+                "suite", sanitizer.metadataText(suite),
+                "reportType", sanitizer.metadataText(reportType),
+                "status", sanitizer.metadataText(status),
+                "failureCategory", sanitizer.metadataText(failureCategory),
+                "generatedAt", generatedAt.toString(),
+                "summaryMetrics", sanitizeMetadataValue(report.summaryMetrics())
+        );
+        if (report.messageSummary() != null && !report.messageSummary().isBlank()) {
+            metadata.put("messageSummary", sanitizer.error(report.messageSummary()));
+        }
+
+        String summary = joinNonBlank(
+                reportType + " " + status,
+                "suite=" + suite,
+                metricSummary(report.summaryMetrics()),
+                failed ? "failureCategory=" + failureCategory : null,
+                report.messageSummary()
+        );
+        return observation(
+                report.sourceType(),
+                reportRunId,
+                report.sourceType().value() + ":" + suite + ":" + reportRunId,
+                report.projectId(),
+                taskType,
+                status,
+                "Report artifact: " + reportType,
+                summary,
+                generatedAt,
+                report.provider(),
+                report.modelName(),
+                failed ? failureCategory : null,
+                failed ? report.messageSummary() : null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                reportRunId,
+                report.reportPath(),
+                EMPTY_JSON,
+                writeJson(metadata),
+                failed ? PRIVACY_SENSITIVE_REDACTED : PRIVACY_PROJECT_PRIVATE
+        );
+    }
+
     private Observation observation(
             ObservationSourceType sourceType,
             Long sourceRecordId,
+            String sourceKey,
+            Long projectId,
+            String taskType,
+            String sourceStatus,
+            String title,
+            String summary,
+            Instant occurredAt,
+            String provider,
+            String modelName,
+            String errorType,
+            String errorMessage,
+            Long runId,
+            Long eventId,
+            Long retrievalId,
+            Long reviewId,
+            Long issueId,
+            Long decisionReuseRecordId,
+            String reportRunId,
+            String reportPath,
+            String relationJson,
+            String metadataJson,
+            String privacyLevel
+    ) {
+        return observation(
+                sourceType,
+                sourceRecordId == null ? null : String.valueOf(sourceRecordId),
+                sourceKey,
+                projectId,
+                taskType,
+                sourceStatus,
+                title,
+                summary,
+                occurredAt,
+                provider,
+                modelName,
+                errorType,
+                errorMessage,
+                runId,
+                eventId,
+                retrievalId,
+                reviewId,
+                issueId,
+                decisionReuseRecordId,
+                reportRunId,
+                reportPath,
+                relationJson,
+                metadataJson,
+                privacyLevel
+        );
+    }
+
+    private Observation observation(
+            ObservationSourceType sourceType,
+            String sourceRecordId,
             String sourceKey,
             Long projectId,
             String taskType,
@@ -334,7 +450,7 @@ public class ObservationMapper {
                 null,
                 projectId,
                 sourceType.value(),
-                String.valueOf(sourceRecordId),
+                sanitizer.metadataText(firstNonBlank(sourceRecordId, sourceKey, "unknown")),
                 sourceKey,
                 taskType,
                 ObservationLifecycle.RAW.value(),
@@ -477,6 +593,61 @@ public class ObservationMapper {
             return "LLM_PROVIDER_NOT_CONFIGURED";
         }
         return "LLM_CALL_FAILED";
+    }
+
+    private String metricSummary(Map<String, Object> metrics) {
+        if (metrics == null || metrics.isEmpty()) {
+            return null;
+        }
+        List<String> parts = new ArrayList<>();
+        appendMetric(parts, metrics, "caseCount");
+        appendMetric(parts, metrics, "completed");
+        appendMetric(parts, metrics, "failed");
+        appendMetric(parts, metrics, "skipped");
+        appendMetric(parts, metrics, "beforeIssueCount");
+        appendMetric(parts, metrics, "afterIssueCount");
+        appendMetric(parts, metrics, "filteredByPriorFeedbackCount");
+        return parts.isEmpty() ? null : String.join("; ", parts);
+    }
+
+    private void appendMetric(List<String> parts, Map<String, Object> metrics, String name) {
+        Object value = metrics.get(name);
+        if (value instanceof Number || value instanceof Boolean) {
+            parts.add(name + "=" + value);
+        }
+    }
+
+    private Object sanitizeMetadataValue(Object value) {
+        if (value instanceof String text) {
+            return sanitizer.metadataText(text);
+        }
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> sanitized = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                sanitized.put(
+                        sanitizer.metadataText(String.valueOf(entry.getKey())),
+                        sanitizeMetadataValue(entry.getValue())
+                );
+            }
+            return sanitized;
+        }
+        if (value instanceof Iterable<?> iterable) {
+            List<Object> sanitized = new ArrayList<>();
+            for (Object item : iterable) {
+                sanitized.add(sanitizeMetadataValue(item));
+            }
+            return sanitized;
+        }
+        return value;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 
     private record ReviewContext(
