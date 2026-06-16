@@ -13,6 +13,11 @@ import com.devcontext.domain.codemap.CodeDomainTerm;
 import com.devcontext.domain.codemap.CodeEndpoint;
 import com.devcontext.domain.codemap.CodeEntrypoint;
 import com.devcontext.domain.codemap.CodeMap;
+import com.devcontext.domain.codemap.CodeMapConfigKey;
+import com.devcontext.domain.codemap.CodeMapDependencyEdge;
+import com.devcontext.domain.codemap.CodeMapFileEntry;
+import com.devcontext.domain.codemap.CodeMapRoutingHint;
+import com.devcontext.domain.codemap.CodeMapTestRelation;
 import com.devcontext.domain.codemap.CodeModule;
 import com.devcontext.domain.codemap.CodeRuntimeComponent;
 import com.devcontext.domain.codemap.CodeSymbol;
@@ -125,6 +130,100 @@ class ProjectGraphMvpTests {
                 .anySatisfy(node -> assertThat(node.nodeType()).isEqualTo("profile_fact"));
         assertThat(fileNeighborhood.neighborNodes())
                 .anySatisfy(node -> assertThat(node.nodeType()).isEqualTo("symbol"));
+    }
+
+    @Test
+    void routesCodeMapV2SectionsThroughSummaryAndNeighbors() throws Exception {
+        createGraphRoutingFixture();
+        long projectId = createProject("graph-routing-demo");
+
+        ProjectGraphSummary summary = graphService.rebuildGraph(projectId);
+
+        assertThat(summary.nodeTypeCounts())
+                .containsKeys("endpoint", "config_key", "sql_hint", "mapper_hint", "entity_hint", "file", "file_role", "symbol");
+        assertThat(summary.edgeTypeCounts())
+                .containsKeys("configured_in", "hinted_by", "tests", "type_dependency", "has_role", "handled_by", "defined_in");
+
+        JsonNode apiSummary = readGraphSummary(projectId);
+        assertThat(apiSummary.path("nodeTypeCounts").path("config_key").asInt())
+                .isEqualTo(summary.nodeTypeCounts().get("config_key"));
+        assertThat(apiSummary.path("edgeTypeCounts").path("tests").asInt())
+                .isEqualTo(summary.edgeTypeCounts().get("tests"));
+
+        JsonNode endpointNeighbors = readNeighbors(projectId, "endpoint:GET /api/orders", null);
+        assertThat(endpointNeighbors.path("edges"))
+                .extracting(edge -> edge.path("edgeType").asText())
+                .contains("handled_by", "defined_in");
+
+        JsonNode configNeighbors = readNeighbors(
+                projectId,
+                "config_key:src/main/resources/application.yml#spring.datasource.url",
+                null
+        );
+        assertThat(configNeighbors.path("seedNodes"))
+                .anySatisfy(node -> {
+                    assertThat(node.path("nodeType").asText()).isEqualTo("config_key");
+                    assertThat(node.path("evidenceType").asText()).isEqualTo("CONFIG");
+                });
+        assertThat(configNeighbors.path("neighborNodes"))
+                .anySatisfy(node -> assertThat(node.path("stableKey").asText())
+                        .isEqualTo("file:src/main/resources/application.yml"));
+        assertThat(configNeighbors.path("edges"))
+                .anySatisfy(edge -> {
+                    assertThat(edge.path("edgeType").asText()).isEqualTo("configured_in");
+                    assertThat(edge.path("label").asText()).contains("Code Map config key");
+                });
+
+        JsonNode sqlNeighbors = readNeighbors(
+                projectId,
+                "sql_hint:src/main/resources/db/migration/V1__orders.sql#sql_table:orders",
+                null
+        );
+        assertThat(sqlNeighbors.path("seedNodes"))
+                .anySatisfy(node -> assertThat(node.path("nodeType").asText()).isEqualTo("sql_hint"));
+        assertThat(sqlNeighbors.path("edges"))
+                .anySatisfy(edge -> {
+                    assertThat(edge.path("edgeType").asText()).isEqualTo("hinted_by");
+                    assertThat(edge.path("label").asText()).contains("Code Map SQL hint");
+                });
+
+        JsonNode entityNeighbors = readNeighbors(
+                projectId,
+                "entity_hint:src/main/java/com/acme/order/OrderEntity.java#entity_table:orders",
+                null
+        );
+        assertThat(entityNeighbors.path("seedNodes"))
+                .anySatisfy(node -> assertThat(node.path("nodeType").asText()).isEqualTo("entity_hint"));
+        assertThat(entityNeighbors.path("edges"))
+                .anySatisfy(edge -> assertThat(edge.path("label").asText()).contains("Code Map entity hint"));
+
+        JsonNode testNeighbors = readNeighbors(
+                projectId,
+                "file:src/test/java/com/acme/order/OrderServiceTest.java",
+                null
+        );
+        assertThat(testNeighbors.path("neighborNodes"))
+                .anySatisfy(node -> assertThat(node.path("stableKey").asText())
+                        .isEqualTo("file:src/main/java/com/acme/order/OrderService.java"));
+        assertThat(testNeighbors.path("edges"))
+                .anySatisfy(edge -> {
+                    assertThat(edge.path("edgeType").asText()).isEqualTo("tests");
+                    assertThat(edge.path("label").asText()).contains("name_convention");
+                });
+
+        JsonNode dependencyNeighbors = readNeighbors(
+                projectId,
+                "symbol:src/main/java/com/acme/order/OrderController.java#OrderController",
+                null
+        );
+        assertThat(dependencyNeighbors.path("neighborNodes"))
+                .anySatisfy(node -> assertThat(node.path("stableKey").asText())
+                        .isEqualTo("symbol:src/main/java/com/acme/order/OrderService.java#OrderService"));
+        assertThat(dependencyNeighbors.path("edges"))
+                .anySatisfy(edge -> {
+                    assertThat(edge.path("edgeType").asText()).isEqualTo("type_dependency");
+                    assertThat(edge.path("label").asText()).contains("Code Map dependency edge");
+                });
     }
 
     @Test
@@ -247,6 +346,108 @@ class ProjectGraphMvpTests {
                 .writeValue(aiDir.resolve("code-map.json").toFile(), codeMap());
     }
 
+    private void createGraphRoutingFixture() throws Exception {
+        writeProjectFile("pom.xml", """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <artifactId>graph-routing-demo</artifactId>
+                </project>
+                """);
+        writeProjectFile("AGENTS.md", """
+                # Project Guide
+
+                Graph routing demo handles order reads.
+                """);
+        writeProjectFile("src/main/resources/application.yml", """
+                spring:
+                  datasource:
+                    url: jdbc:postgresql://localhost/orders
+                """);
+        writeProjectFile("src/main/resources/db/migration/V1__orders.sql", """
+                CREATE TABLE orders (
+                    id BIGINT PRIMARY KEY
+                );
+                """);
+        writeProjectFile("src/main/resources/mappers/OrderMapper.xml", """
+                <mapper namespace="com.acme.order.OrderMapper">
+                    <select id="findByStatus" resultType="com.acme.order.OrderEntity">
+                        SELECT * FROM orders WHERE status = #{status}
+                    </select>
+                </mapper>
+                """);
+        writeProjectFile("src/main/java/com/acme/order/OrderController.java", """
+                package com.acme.order;
+
+                import org.springframework.web.bind.annotation.GetMapping;
+                import org.springframework.web.bind.annotation.RestController;
+
+                @RestController
+                public class OrderController {
+                    private final OrderService orderService;
+
+                    public OrderController(OrderService orderService) {
+                        this.orderService = orderService;
+                    }
+
+                    @GetMapping("/api/orders")
+                    public void list() {
+                        orderService.listOrders();
+                    }
+                }
+                """);
+        writeProjectFile("src/main/java/com/acme/order/OrderService.java", """
+                package com.acme.order;
+
+                import org.springframework.stereotype.Service;
+
+                @Service
+                public class OrderService {
+                    public void listOrders() {
+                    }
+                }
+                """);
+        writeProjectFile("src/main/java/com/acme/order/OrderRepository.java", """
+                package com.acme.order;
+
+                import org.springframework.stereotype.Repository;
+
+                @Repository
+                public class OrderRepository {
+                    public void findByStatus() {
+                    }
+                }
+                """);
+        writeProjectFile("src/main/java/com/acme/order/OrderEntity.java", """
+                package com.acme.order;
+
+                import jakarta.persistence.Entity;
+                import jakarta.persistence.Table;
+
+                @Entity
+                @Table(name = "orders")
+                public class OrderEntity {
+                    private Long id;
+                }
+                """);
+        writeProjectFile("src/test/java/com/acme/order/OrderServiceTest.java", """
+                package com.acme.order;
+
+                class OrderServiceTest {
+                    void listOrders() {
+                    }
+                }
+                """);
+        Path aiDir = Files.createDirectories(projectRoot.resolve(".ai"));
+        objectMapper.writerWithDefaultPrettyPrinter()
+                .writeValue(aiDir.resolve("code-map.json").toFile(), routingCodeMap());
+    }
+
+    private void writeProjectFile(String relativePath, String content) throws Exception {
+        Path file = projectRoot.resolve(relativePath);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content);
+    }
+
     private CodeMap codeMap() {
         return new CodeMap(
                 Instant.now().toString(),
@@ -301,6 +502,192 @@ class ProjectGraphMvpTests {
                 List.of(),
                 List.of("AGENTS.md"),
                 List.of()
+        );
+    }
+
+    private CodeMap routingCodeMap() {
+        String controllerFile = "src/main/java/com/acme/order/OrderController.java";
+        String serviceFile = "src/main/java/com/acme/order/OrderService.java";
+        String repositoryFile = "src/main/java/com/acme/order/OrderRepository.java";
+        String entityFile = "src/main/java/com/acme/order/OrderEntity.java";
+        String configFile = "src/main/resources/application.yml";
+        String sqlFile = "src/main/resources/db/migration/V1__orders.sql";
+        String mapperFile = "src/main/resources/mappers/OrderMapper.xml";
+        String testFile = "src/test/java/com/acme/order/OrderServiceTest.java";
+        return new CodeMap(
+                CodeMap.CURRENT_SCHEMA_VERSION,
+                Instant.now().toString(),
+                "graph-routing-demo",
+                projectRoot.toString(),
+                "Java",
+                "Spring Boot",
+                "Maven",
+                "main",
+                "abc123",
+                List.of(new CodeModule(
+                        "order",
+                        "src/main/java/com/acme/order",
+                        List.of("OrderController", "OrderService", "OrderRepository", "OrderEntity"),
+                        "HTTP/API and data access routing"
+                )),
+                List.of(new CodeEntrypoint(
+                        "controller",
+                        controllerFile,
+                        List.of("list")
+                )),
+                List.of(
+                        new CodeSymbol(
+                                "OrderController",
+                                "controller",
+                                "order",
+                                controllerFile,
+                                List.of("list"),
+                                List.of("GET /api/orders -> list"),
+                                List.of("OrderService"),
+                                List.of("Spring MVC"),
+                                List.of("order")
+                        ),
+                        new CodeSymbol(
+                                "OrderService",
+                                "service",
+                                "order",
+                                serviceFile,
+                                List.of("listOrders"),
+                                List.of(),
+                                List.of("OrderRepository"),
+                                List.of("Spring"),
+                                List.of("order")
+                        ),
+                        new CodeSymbol(
+                                "OrderRepository",
+                                "repository",
+                                "order",
+                                repositoryFile,
+                                List.of("findByStatus"),
+                                List.of(),
+                                List.of("OrderEntity"),
+                                List.of("Spring Data"),
+                                List.of("order")
+                        ),
+                        new CodeSymbol(
+                                "OrderEntity",
+                                "entity",
+                                "order",
+                                entityFile,
+                                List.of(),
+                                List.of(),
+                                List.of(),
+                                List.of("JPA"),
+                                List.of("order")
+                        )
+                ),
+                List.of(new CodeEndpoint(
+                        "GET",
+                        "/api/orders",
+                        "list",
+                        "OrderController",
+                        "order",
+                        controllerFile,
+                        List.of("order")
+                )),
+                List.of(new CodeDependency(
+                        "OrderController",
+                        controllerFile,
+                        "OrderService",
+                        "order"
+                )),
+                List.<CodeTechnologySignal>of(),
+                List.<CodeRuntimeComponent>of(),
+                List.<CodeDomainTerm>of(),
+                Map.of("test", "mvn test"),
+                List.of(configFile),
+                List.of("src/test/java"),
+                List.of("AGENTS.md"),
+                List.of(),
+                List.of(
+                        new CodeMapFileEntry(
+                                controllerFile,
+                                "source",
+                                "Java",
+                                "order",
+                                List.of("controller", "endpoint", "spring-component")
+                        ),
+                        new CodeMapFileEntry(
+                                serviceFile,
+                                "source",
+                                "Java",
+                                "order",
+                                List.of("service", "spring-component")
+                        ),
+                        new CodeMapFileEntry(
+                                repositoryFile,
+                                "source",
+                                "Java",
+                                "order",
+                                List.of("repository", "data-access", "spring-component")
+                        ),
+                        new CodeMapFileEntry(
+                                entityFile,
+                                "source",
+                                "Java",
+                                "order",
+                                List.of("entity", "domain-entity")
+                        ),
+                        new CodeMapFileEntry(
+                                configFile,
+                                "configuration",
+                                "YAML",
+                                "resources",
+                                List.of("configuration")
+                        ),
+                        new CodeMapFileEntry(
+                                sqlFile,
+                                "database_schema",
+                                "SQL",
+                                "migration",
+                                List.of("sql", "database-schema")
+                        ),
+                        new CodeMapFileEntry(
+                                mapperFile,
+                                "mapper",
+                                "XML",
+                                "mappers",
+                                List.of("mapper", "data-access")
+                        ),
+                        new CodeMapFileEntry(
+                                testFile,
+                                "test",
+                                "Java",
+                                "order",
+                                List.of("test")
+                        )
+                ),
+                List.of(new CodeMapConfigKey(
+                        "spring.datasource.url",
+                        configFile,
+                        "resources"
+                )),
+                List.of(
+                        new CodeMapRoutingHint("sql_table", "orders", sqlFile, "migration"),
+                        new CodeMapRoutingHint("sql_table", "orders", mapperFile, "OrderMapper")
+                ),
+                List.of(new CodeMapRoutingHint("mapper_xml", "OrderMapper", mapperFile, "com.acme.order.OrderMapper")),
+                List.of(
+                        new CodeMapRoutingHint("entity", "OrderEntity", entityFile, "OrderEntity"),
+                        new CodeMapRoutingHint("entity_table", "orders", entityFile, "OrderEntity")
+                ),
+                List.of(new CodeMapTestRelation(
+                        testFile,
+                        serviceFile,
+                        "name_convention"
+                )),
+                List.of(new CodeMapDependencyEdge(
+                        controllerFile,
+                        "OrderController",
+                        null,
+                        "OrderService",
+                        "type_dependency"
+                ))
         );
     }
 }

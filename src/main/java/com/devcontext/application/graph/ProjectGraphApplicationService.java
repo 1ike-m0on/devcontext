@@ -5,6 +5,11 @@ import com.devcontext.application.project.ProjectApplicationService;
 import com.devcontext.domain.codemap.CodeEndpoint;
 import com.devcontext.domain.codemap.CodeEntrypoint;
 import com.devcontext.domain.codemap.CodeMap;
+import com.devcontext.domain.codemap.CodeMapConfigKey;
+import com.devcontext.domain.codemap.CodeMapDependencyEdge;
+import com.devcontext.domain.codemap.CodeMapFileEntry;
+import com.devcontext.domain.codemap.CodeMapRoutingHint;
+import com.devcontext.domain.codemap.CodeMapTestRelation;
 import com.devcontext.domain.codemap.CodeModule;
 import com.devcontext.domain.codemap.CodeSymbol;
 import com.devcontext.domain.evidence.EvidenceType;
@@ -27,6 +32,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -205,6 +211,8 @@ public class ProjectGraphApplicationService {
         private final Instant now;
         private final Map<String, ProjectGraphNode> nodes = new LinkedHashMap<>();
         private final Map<String, ProjectGraphEdge> edges = new LinkedHashMap<>();
+        private final Map<String, String> uniqueSymbolKeysByName = new LinkedHashMap<>();
+        private final Set<String> ambiguousSymbolNames = new LinkedHashSet<>();
 
         GraphAccumulator(Long projectId, Instant now) {
             this.projectId = projectId;
@@ -213,10 +221,17 @@ public class ProjectGraphApplicationService {
 
         void addCodeMap(CodeMap codeMap) {
             addNode("file", fileKey(CODE_MAP_PATH), "code-map.json", CODE_MAP_PATH, EvidenceType.CODE_MAP);
+            safeList(codeMap.files()).forEach(this::addFileEntry);
             safeList(codeMap.modules()).forEach(this::addModule);
             safeList(codeMap.symbols()).forEach(this::addSymbol);
             safeList(codeMap.entrypoints()).forEach(this::addEntrypoint);
             safeList(codeMap.endpoints()).forEach(this::addEndpoint);
+            safeList(codeMap.configKeys()).forEach(this::addConfigKey);
+            safeList(codeMap.sqlHints()).forEach(hint -> addRoutingHint(hint, "sql_hint", EvidenceType.SQL_SCHEMA, "SQL"));
+            safeList(codeMap.mapperHints()).forEach(hint -> addRoutingHint(hint, "mapper_hint", EvidenceType.MAPPER, "mapper"));
+            safeList(codeMap.entityHints()).forEach(hint -> addRoutingHint(hint, "entity_hint", EvidenceType.SQL_SCHEMA, "entity"));
+            safeList(codeMap.testRelations()).forEach(this::addTestRelation);
+            safeList(codeMap.dependencyEdges()).forEach(this::addDependencyEdge);
         }
 
         void addProfile(ProjectProfile profile) {
@@ -240,11 +255,36 @@ public class ProjectGraphApplicationService {
             addEdge("described_by", moduleKey, fileKey(CODE_MAP_PATH), "described by code-map", CODE_MAP_PATH, EvidenceType.CODE_MAP);
         }
 
+        private void addFileEntry(CodeMapFileEntry file) {
+            if (file == null || isBlank(file.path())) {
+                return;
+            }
+            String fileKey = fileKey(file.path());
+            EvidenceType evidenceType = evidenceTypeForFile(file);
+            addNode("file", fileKey, fileLabel(file.path()), file.path(), evidenceType);
+            if (!isBlank(file.module())) {
+                String moduleKey = moduleKey(file.module());
+                addNode("module", moduleKey, file.module(), CODE_MAP_PATH, EvidenceType.CODE_MAP);
+                addEdge("contains", moduleKey, fileKey, "Code Map file module: " + file.module(), file.path(), EvidenceType.CODE_MAP);
+            }
+            safeList(file.roles()).forEach(role -> addFileRole(file.path(), role));
+        }
+
+        private void addFileRole(String filePath, String role) {
+            if (isBlank(filePath) || isBlank(role)) {
+                return;
+            }
+            String roleKey = fileRoleKey(role);
+            addNode("file_role", roleKey, role, CODE_MAP_PATH, EvidenceType.CODE_MAP);
+            addEdge("has_role", fileKey(filePath), roleKey, "Code Map file role: " + role, filePath, EvidenceType.CODE_MAP);
+        }
+
         private void addSymbol(CodeSymbol symbol) {
             String fileKey = fileKey(symbol.file());
             String symbolKey = symbolKey(symbol);
             addNode("file", fileKey, fileLabel(symbol.file()), symbol.file(), EvidenceType.SERVICE_CODE);
             addNode("symbol", symbolKey, symbol.name(), symbol.file(), EvidenceType.SERVICE_CODE);
+            rememberSymbolKey(symbol.name(), symbolKey);
             addEdge("declares", fileKey, symbolKey, "declares " + symbol.name(), symbol.file(), EvidenceType.SERVICE_CODE);
             if (!isBlank(symbol.module())) {
                 String moduleKey = moduleKey(symbol.module());
@@ -269,6 +309,7 @@ public class ProjectGraphApplicationService {
             addNode("endpoint", endpointKey, endpoint.httpMethod() + " " + endpoint.path(), endpoint.file(), EvidenceType.API_CONTROLLER);
             addNode("file", fileKey, fileLabel(endpoint.file()), endpoint.file(), EvidenceType.API_CONTROLLER);
             addNode("symbol", symbolKey, endpoint.className(), endpoint.file(), EvidenceType.API_CONTROLLER);
+            rememberSymbolKey(endpoint.className(), symbolKey);
             addEdge("handled_by", endpointKey, symbolKey, "handled by " + endpoint.className(), endpoint.file(), EvidenceType.API_CONTROLLER);
             addEdge("defined_in", endpointKey, fileKey, "defined in " + endpoint.file(), endpoint.file(), EvidenceType.API_CONTROLLER);
             if (!isBlank(endpoint.module())) {
@@ -276,6 +317,111 @@ public class ProjectGraphApplicationService {
                 addNode("module", moduleKey, endpoint.module(), CODE_MAP_PATH, EvidenceType.CODE_MAP);
                 addEdge("belongs_to", endpointKey, moduleKey, "belongs to " + endpoint.module(), endpoint.file(), EvidenceType.CODE_MAP);
             }
+        }
+
+        private void addConfigKey(CodeMapConfigKey configKey) {
+            if (configKey == null || isBlank(configKey.key()) || isBlank(configKey.file())) {
+                return;
+            }
+            String fileKey = fileKey(configKey.file());
+            String configNodeKey = configKey(configKey);
+            addNode("file", fileKey, fileLabel(configKey.file()), configKey.file(), EvidenceType.CONFIG);
+            addNode("config_key", configNodeKey, configKey.key(), configKey.file(), EvidenceType.CONFIG);
+            addEdge(
+                    "configured_in",
+                    configNodeKey,
+                    fileKey,
+                    "Code Map config key: " + configKey.key() + " in " + configKey.file(),
+                    configKey.file(),
+                    EvidenceType.CONFIG
+            );
+        }
+
+        private void addRoutingHint(
+                CodeMapRoutingHint hint,
+                String nodeType,
+                EvidenceType evidenceType,
+                String sourceLabel
+        ) {
+            if (hint == null || isBlank(hint.name()) || isBlank(hint.file())) {
+                return;
+            }
+            String fileKey = fileKey(hint.file());
+            String hintKey = routingHintKey(nodeType, hint);
+            String hintLabel = routingHintLabel(hint);
+            addNode("file", fileKey, fileLabel(hint.file()), hint.file(), evidenceType);
+            addNode(nodeType, hintKey, hintLabel, hint.file(), evidenceType);
+            addEdge(
+                    "hinted_by",
+                    hintKey,
+                    fileKey,
+                    "Code Map " + sourceLabel + " hint: " + hintLabel + " in " + hint.file(),
+                    hint.file(),
+                    evidenceType
+            );
+        }
+
+        private void addTestRelation(CodeMapTestRelation relation) {
+            if (relation == null || isBlank(relation.testFile()) || isBlank(relation.targetFile())) {
+                return;
+            }
+            String testFileKey = fileKey(relation.testFile());
+            String targetFileKey = fileKey(relation.targetFile());
+            addNode("file", testFileKey, fileLabel(relation.testFile()), relation.testFile(), EvidenceType.TEST);
+            addNode("file", targetFileKey, fileLabel(relation.targetFile()), relation.targetFile(), EvidenceType.SERVICE_CODE);
+            addEdge(
+                    "tests",
+                    testFileKey,
+                    targetFileKey,
+                    "Code Map test relation: " + relationLabel(relation),
+                    relation.testFile(),
+                    EvidenceType.TEST
+            );
+        }
+
+        private void addDependencyEdge(CodeMapDependencyEdge dependency) {
+            if (dependency == null) {
+                return;
+            }
+            String fromNodeKey = dependencyNodeKey(dependency.fromFile(), dependency.fromSymbol());
+            String toNodeKey = dependencyNodeKey(dependency.toFile(), dependency.toSymbol());
+            if (isBlank(fromNodeKey) || isBlank(toNodeKey)) {
+                return;
+            }
+            String edgeType = isBlank(dependency.edgeType()) ? "depends_on" : dependency.edgeType();
+            addEdge(
+                    edgeType,
+                    fromNodeKey,
+                    toNodeKey,
+                    "Code Map dependency edge: " + edgeType,
+                    isBlank(dependency.fromFile()) ? CODE_MAP_PATH : dependency.fromFile(),
+                    EvidenceType.CODE_MAP
+            );
+        }
+
+        private String dependencyNodeKey(String filePath, String symbolName) {
+            if (!isBlank(filePath)) {
+                String fileKey = fileKey(filePath);
+                addNode("file", fileKey, fileLabel(filePath), filePath, EvidenceType.SERVICE_CODE);
+                if (isBlank(symbolName)) {
+                    return fileKey;
+                }
+                String symbolKey = symbolKey(filePath, symbolName);
+                addNode("symbol", symbolKey, symbolName, filePath, EvidenceType.SERVICE_CODE);
+                rememberSymbolKey(symbolName, symbolKey);
+                addEdge("declares", fileKey, symbolKey, "declares " + symbolName, filePath, EvidenceType.SERVICE_CODE);
+                return symbolKey;
+            }
+            if (isBlank(symbolName)) {
+                return "";
+            }
+            Optional<String> knownSymbolKey = knownSymbolKey(symbolName);
+            if (knownSymbolKey.isPresent()) {
+                return knownSymbolKey.get();
+            }
+            String symbolRefKey = symbolRefKey(symbolName);
+            addNode("symbol_ref", symbolRefKey, symbolName, CODE_MAP_PATH, EvidenceType.CODE_MAP);
+            return symbolRefKey;
         }
 
         private void addNode(String nodeType, String stableKey, String label, String sourcePath, EvidenceType evidenceType) {
@@ -448,6 +594,52 @@ public class ProjectGraphApplicationService {
             return "context_asset:" + sourcePath;
         }
 
+        private String fileRoleKey(String role) {
+            return "file_role:" + role;
+        }
+
+        private String configKey(CodeMapConfigKey configKey) {
+            return "config_key:" + configKey.file() + "#" + configKey.key();
+        }
+
+        private String routingHintKey(String nodeType, CodeMapRoutingHint hint) {
+            String kind = isBlank(hint.kind()) ? "hint" : hint.kind();
+            return nodeType + ":" + hint.file() + "#" + kind + ":" + hint.name();
+        }
+
+        private String routingHintLabel(CodeMapRoutingHint hint) {
+            return isBlank(hint.kind()) ? hint.name() : hint.kind() + ": " + hint.name();
+        }
+
+        private String relationLabel(CodeMapTestRelation relation) {
+            return isBlank(relation.relationType()) ? "test covers target" : relation.relationType();
+        }
+
+        private String symbolRefKey(String symbolName) {
+            return "symbol_ref:" + symbolName;
+        }
+
+        private void rememberSymbolKey(String symbolName, String symbolKey) {
+            if (isBlank(symbolName) || isBlank(symbolKey)) {
+                return;
+            }
+            if (ambiguousSymbolNames.contains(symbolName)) {
+                return;
+            }
+            String existing = uniqueSymbolKeysByName.putIfAbsent(symbolName, symbolKey);
+            if (existing != null && !existing.equals(symbolKey)) {
+                uniqueSymbolKeysByName.remove(symbolName);
+                ambiguousSymbolNames.add(symbolName);
+            }
+        }
+
+        private Optional<String> knownSymbolKey(String symbolName) {
+            if (isBlank(symbolName) || ambiguousSymbolNames.contains(symbolName)) {
+                return Optional.empty();
+            }
+            return Optional.ofNullable(uniqueSymbolKeysByName.get(symbolName));
+        }
+
         private String symbolKey(CodeSymbol symbol) {
             return symbolKey(symbol.file(), symbol.name());
         }
@@ -466,6 +658,42 @@ public class ProjectGraphApplicationService {
 
         private String edgeKey(String edgeType, String fromNodeKey, String toNodeKey) {
             return edgeType + ":" + fromNodeKey + "->" + toNodeKey;
+        }
+
+        private EvidenceType evidenceTypeForFile(CodeMapFileEntry file) {
+            String kind = normalized(file.kind());
+            Set<String> roles = safeList(file.roles()).stream()
+                    .filter(role -> !isBlank(role))
+                    .map(this::normalized)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if (kind.equals("configuration") || roles.contains("configuration")) {
+                return EvidenceType.CONFIG;
+            }
+            if (kind.equals("database_schema") || roles.contains("sql") || roles.contains("database-schema")) {
+                return EvidenceType.SQL_SCHEMA;
+            }
+            if (kind.equals("mapper") || roles.contains("mapper") || roles.contains("data-access")) {
+                return EvidenceType.MAPPER;
+            }
+            if (kind.equals("test") || roles.contains("test")) {
+                return EvidenceType.TEST;
+            }
+            if (roles.contains("controller") || roles.contains("endpoint")) {
+                return EvidenceType.API_CONTROLLER;
+            }
+            if (roles.contains("entity") || roles.contains("domain-entity")) {
+                return EvidenceType.SQL_SCHEMA;
+            }
+            if (kind.equals("documentation")) {
+                return file.path() != null && file.path().startsWith(".ai/generated/")
+                        ? EvidenceType.GENERATED_DOC
+                        : EvidenceType.MANUAL_DOC;
+            }
+            return EvidenceType.SERVICE_CODE;
+        }
+
+        private String normalized(String value) {
+            return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
         }
 
         private String fileLabel(String filePath) {
