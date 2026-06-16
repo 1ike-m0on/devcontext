@@ -125,6 +125,7 @@ class RealLlmManualAcceptance {
         return new ConnectionCheckResult(
                 data.path("provider").asText(provider()),
                 data.path("model").asText(model()),
+                data.path("timeout").asText(""),
                 data.path("success").asBoolean(false),
                 data.path("failureCategory").asText(FAILURE_CATEGORY_UNKNOWN),
                 sanitizeMessage(data.path("messageSummary").asText("")),
@@ -292,6 +293,7 @@ class RealLlmManualAcceptance {
         payload.put("mode", MODE);
         payload.put("provider", connectionCheck.provider());
         payload.put("model", connectionCheck.model());
+        payload.put("timeout", connectionCheck.timeout());
         payload.put("keyStatus", connectionCheck.keyStatus());
         payload.put("keyConfigured", connectionCheck.keyConfigured());
         payload.put("success", success);
@@ -322,6 +324,7 @@ class RealLlmManualAcceptance {
         payload.put("endpoint", "POST /api/settings/llm/test");
         payload.put("provider", result.provider());
         payload.put("model", result.model());
+        payload.put("timeout", result.timeout());
         payload.put("success", result.success());
         payload.put("failureCategory", result.failureCategory());
         payload.put("messageSummary", result.messageSummary());
@@ -338,6 +341,7 @@ class RealLlmManualAcceptance {
         payload.put("displayedFields", List.of(
                 "provider",
                 "model",
+                "timeout",
                 "success",
                 "failureCategory",
                 "messageSummary",
@@ -346,6 +350,7 @@ class RealLlmManualAcceptance {
         ));
         payload.put("provider", result.provider());
         payload.put("model", result.model());
+        payload.put("timeout", result.timeout());
         payload.put("success", result.success());
         payload.put("failureCategory", result.failureCategory());
         payload.put("keyStatus", result.keyStatus());
@@ -401,6 +406,7 @@ class RealLlmManualAcceptance {
                 - Generated at: `%s`
                 - Provider: `%s`
                 - Model: `%s`
+                - Timeout: `%s`
                 - Key status: `%s`
                 - Key configured: `%s`
                 - Success: `%s`
@@ -410,6 +416,7 @@ class RealLlmManualAcceptance {
                 ## Settings Connection Check
 
                 - Endpoint: `POST /api/settings/llm/test`
+                - Timeout: `%s`
                 - Success: `%s`
                 - Failure category: `%s`
                 - Message summary: `%s`
@@ -420,8 +427,8 @@ class RealLlmManualAcceptance {
 
                 - Product surface: `React LLM settings test connection`
                 - Uses endpoint: `POST /api/settings/llm/test`
-                - Displayed fields: `provider, model, success, failureCategory, messageSummary, keyStatus, keyConfigured`
-                - Current provider/model: `%s/%s`
+                - Displayed fields: `provider, model, timeout, success, failureCategory, messageSummary, keyStatus, keyConfigured`
+                - Current provider/model/timeout: `%s/%s/%s`
 
                 ## Review Memory Smoke
 
@@ -457,11 +464,13 @@ class RealLlmManualAcceptance {
                 generatedAt,
                 inline(connectionCheck.provider()),
                 inline(connectionCheck.model()),
+                inline(connectionCheck.timeout()),
                 inline(connectionCheck.keyStatus()),
                 connectionCheck.keyConfigured(),
                 success,
                 inline(failureCategory),
                 inline(project.name()),
+                inline(connectionCheck.timeout()),
                 connectionCheck.success(),
                 inline(connectionCheck.failureCategory()),
                 inline(connectionCheck.messageSummary()),
@@ -469,6 +478,7 @@ class RealLlmManualAcceptance {
                 connectionCheck.keyConfigured(),
                 inline(connectionCheck.provider()),
                 inline(connectionCheck.model()),
+                inline(connectionCheck.timeout()),
                 CASE_NAME,
                 reviewMemorySmoke.executed(),
                 reviewMemorySmoke.skipped(),
@@ -504,13 +514,17 @@ class RealLlmManualAcceptance {
         assertThat(json.path("mode").asText()).isEqualTo(MODE);
         assertThat(json.path("provider").asText()).isEqualTo(connectionCheck.provider());
         assertThat(json.path("model").asText()).isEqualTo(connectionCheck.model());
+        assertThat(json.path("timeout").asText()).isEqualTo(connectionCheck.timeout());
         assertThat(json.path("keyStatus").asText()).isEqualTo(connectionCheck.keyStatus());
+        assertThat(json.path("connectionCheck").path("timeout").asText()).isEqualTo(connectionCheck.timeout());
         assertThat(json.path("connectionCheck").path("failureCategory").asText())
                 .isEqualTo(connectionCheck.failureCategory());
         assertThat(json.path("connectionCheck").path("messageSummary").asText()).isNotBlank();
+        assertThat(json.path("reactSettingsConnectionCheck").path("timeout").asText())
+                .isEqualTo(connectionCheck.timeout());
         assertThat(json.path("reactSettingsConnectionCheck").path("displayedFields"))
                 .extracting(JsonNode::asText)
-                .contains("provider", "model", "failureCategory", "messageSummary", "keyStatus", "keyConfigured");
+                .contains("provider", "model", "timeout", "failureCategory", "messageSummary", "keyStatus", "keyConfigured");
         assertThat(json.path("reviewMemorySmoke").path("failureCategory").asText())
                 .isEqualTo(reviewMemorySmoke.failureCategory());
         assertThat(json.path("reviewMemorySmoke").path("contextCoverage").has("reviewMemorySignals")).isTrue();
@@ -521,6 +535,7 @@ class RealLlmManualAcceptance {
                 .contains("# Real LLM Manual Acceptance")
                 .contains("- Provider: `" + connectionCheck.provider() + "`")
                 .contains("- Model: `" + connectionCheck.model() + "`")
+                .contains("- Timeout: `" + inline(connectionCheck.timeout()) + "`")
                 .contains("- Failure category: `" + json.path("failureCategory").asText() + "`")
                 .contains("## Settings Connection Check")
                 .contains("## React Settings Test Connection")
@@ -951,6 +966,7 @@ class RealLlmManualAcceptance {
     private record ConnectionCheckResult(
             String provider,
             String model,
+            String timeout,
             boolean success,
             String failureCategory,
             String messageSummary,
