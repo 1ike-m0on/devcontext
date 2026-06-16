@@ -157,11 +157,22 @@ class KnowledgeFusionScoringServiceTests {
                 "query",
                 "query",
                 List.of(),
+                "test_plan",
                 requiredEvidenceTypes,
                 preferredEvidenceTypes,
                 List.of(),
+                List.of(),
+                preferredEvidenceTypes.stream()
+                        .map(type -> type.sourceKind().value())
+                        .distinct()
+                        .toList(),
+                List.of(),
                 "evidence_grounded",
-                requiredEvidenceTypes.isEmpty() ? "require_retrieved_context" : "require_specific_evidence"
+                requiredEvidenceTypes.isEmpty() ? "require_retrieved_context" : "require_specific_evidence",
+                requiredEvidenceTypes.isEmpty()
+                        ? "retrieve_preferred_then_allow_partial_answer"
+                        : "require_specific_evidence_or_no_answer",
+                List.of("test_plan")
         );
     }
 

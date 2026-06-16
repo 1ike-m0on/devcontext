@@ -24,6 +24,7 @@ public class RagAnswerApplicationService {
     private final AgentRunApplicationService runService;
     private final RetrievalRecordRepository retrievalRecordRepository;
     private final KnowledgeEvidenceEvaluationService evidenceEvaluationService;
+    private final KnowledgeQueryPlanTraceFormatter queryPlanTraceFormatter;
 
     public RagAnswerApplicationService(
             KnowledgeSearchApplicationService searchService,
@@ -32,7 +33,8 @@ public class RagAnswerApplicationService {
             DevContextLlmProperties llmProperties,
             AgentRunApplicationService runService,
             RetrievalRecordRepository retrievalRecordRepository,
-            KnowledgeEvidenceEvaluationService evidenceEvaluationService
+            KnowledgeEvidenceEvaluationService evidenceEvaluationService,
+            KnowledgeQueryPlanTraceFormatter queryPlanTraceFormatter
     ) {
         this.searchService = searchService;
         this.promptBuilder = promptBuilder;
@@ -41,6 +43,7 @@ public class RagAnswerApplicationService {
         this.runService = runService;
         this.retrievalRecordRepository = retrievalRecordRepository;
         this.evidenceEvaluationService = evidenceEvaluationService;
+        this.queryPlanTraceFormatter = queryPlanTraceFormatter;
     }
 
     public RagAnswerResult ask(RagAskCommand command) {
@@ -52,7 +55,7 @@ public class RagAnswerApplicationService {
                     command.topK()
             ), run.id());
             runService.recordEvent(run.id(), "KNOWLEDGE_QUERY_REWRITTEN", searchResponse.query(), searchResponse.rewrittenQuery(), "success", null, null);
-            runService.recordEvent(run.id(), "KNOWLEDGE_QUERY_PLAN_BUILT", searchResponse.query(), searchResponse.queryPlan().preferredEvidenceTypes().toString(), "success", null, null);
+            runService.recordEvent(run.id(), "KNOWLEDGE_QUERY_PLAN_BUILT", searchResponse.query(), queryPlanTraceFormatter.summary(searchResponse.queryPlan()), "success", null, null);
             runService.recordEvent(run.id(), "KNOWLEDGE_RETRIEVED", searchResponse.rewrittenQuery(), searchResponse.results().size() + " chunks retrieved", "success", null, null);
             runService.recordEvent(run.id(), "KNOWLEDGE_EVIDENCE_RETRIEVED", searchResponse.queryPlan().requiredEvidenceTypes().toString(), evidenceDistribution(searchResponse), "success", null, null);
 
