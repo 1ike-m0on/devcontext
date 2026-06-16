@@ -4,6 +4,7 @@ import com.devcontext.domain.evidence.EvidenceSourceReliability;
 import com.devcontext.domain.knowledge.KnowledgeChunkView;
 import com.devcontext.domain.knowledge.KnowledgeEvidenceType;
 import com.devcontext.domain.knowledge.KnowledgeFusionScore;
+import com.devcontext.domain.knowledge.KnowledgeProjectContextSignal;
 import com.devcontext.domain.knowledge.KnowledgeQueryPlan;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -22,6 +23,8 @@ public class KnowledgeFusionScoringService {
     private static final double PRIMARY_SOURCE_BOOST = 0.18;
     private static final double SECONDARY_SOURCE_BOOST = 0.08;
     private static final double SPECIFIC_ENGINEERING_BOOST = 0.12;
+    private static final double PROJECT_GRAPH_CONTEXT_BOOST = 0.34;
+    private static final double PROJECT_PROFILE_CONTEXT_BOOST = 0.26;
     private static final double GENERIC_DOC_PENALTY = 0.22;
     private static final double TODO_PENALTY = 0.14;
 
@@ -32,7 +35,21 @@ public class KnowledgeFusionScoringService {
             List<KnowledgeEvidenceType> evidenceTypes,
             KnowledgeChunkView view
     ) {
+        return score(keywordScore, vectorScore, queryPlan, evidenceTypes, view, KnowledgeProjectContextSignal.none());
+    }
+
+    public KnowledgeFusionScore score(
+            double keywordScore,
+            double vectorScore,
+            KnowledgeQueryPlan queryPlan,
+            List<KnowledgeEvidenceType> evidenceTypes,
+            KnowledgeChunkView view,
+            KnowledgeProjectContextSignal projectContextSignal
+    ) {
         List<KnowledgeEvidenceType> safeEvidenceTypes = evidenceTypes == null ? List.of() : evidenceTypes;
+        KnowledgeProjectContextSignal safeProjectContextSignal = projectContextSignal == null
+                ? KnowledgeProjectContextSignal.none()
+                : projectContextSignal;
         List<KnowledgeEvidenceType> required = queryPlan.requiredEvidenceTypes() == null
                 ? List.of()
                 : queryPlan.requiredEvidenceTypes();
@@ -71,6 +88,16 @@ public class KnowledgeFusionScoringService {
         if (specificityReason != null) {
             score += SPECIFIC_ENGINEERING_BOOST;
             reasons.add("specific_engineering_evidence:" + specificityReason);
+        }
+
+        if (safeProjectContextSignal.hasGraphMatches()) {
+            score += PROJECT_GRAPH_CONTEXT_BOOST;
+            reasons.add("project_graph_context:" + join(safeProjectContextSignal.graphMatches()));
+        }
+
+        if (safeProjectContextSignal.hasProfileMatches()) {
+            score += PROJECT_PROFILE_CONTEXT_BOOST;
+            reasons.add("project_profile_context:" + join(safeProjectContextSignal.profileMatches()));
         }
 
         if (isGenericDocOnly(safeEvidenceTypes) && matchedRequired.isEmpty() && matchedPreferred.isEmpty()
@@ -182,6 +209,10 @@ public class KnowledgeFusionScoringService {
 
     private String names(List<KnowledgeEvidenceType> evidenceTypes) {
         return String.join(",", evidenceTypes.stream().map(Enum::name).toList());
+    }
+
+    private String join(List<String> values) {
+        return String.join(",", values);
     }
 
     private String safe(String value) {

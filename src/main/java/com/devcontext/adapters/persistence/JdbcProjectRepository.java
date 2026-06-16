@@ -87,6 +87,12 @@ public class JdbcProjectRepository implements ProjectRepository {
     }
 
     @Override
+    public Optional<Project> findByRootPath(String rootPath) {
+        List<Project> projects = jdbcTemplate.query("SELECT * FROM project WHERE root_path = ?", rowMapper, rootPath);
+        return projects.stream().findFirst();
+    }
+
+    @Override
     public List<Project> findAll() {
         return jdbcTemplate.query("SELECT * FROM project ORDER BY id DESC", rowMapper);
     }
