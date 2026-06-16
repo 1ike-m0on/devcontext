@@ -7,8 +7,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.devcontext.application.project.ProjectApplicationService;
+import com.devcontext.application.memory.ObservationCaptureService;
 import com.devcontext.domain.llm.LlmRequest;
 import com.devcontext.domain.llm.LlmResponse;
+import com.devcontext.domain.memory.ObservationSourceType;
+import com.devcontext.domain.memory.ReportObservationSnapshot;
 import com.devcontext.domain.project.Project;
 import com.devcontext.ports.llm.LlmClient;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -72,6 +75,9 @@ class ReviewMemorySignalBenchmarkSmokeTests {
 
     @Autowired
     private SmokeReviewLlmClient llmClient;
+
+    @Autowired
+    private ObservationCaptureService observationCaptureService;
 
     @TempDir
     private Path projectRoot;
@@ -355,6 +361,32 @@ class ReviewMemorySignalBenchmarkSmokeTests {
                 coverageSummary,
                 filteredSummary
         ));
+        observationCaptureService.captureReport(new ReportObservationSnapshot(
+                project.id(),
+                ObservationSourceType.BENCHMARK_REPORT,
+                runId,
+                SUITE,
+                REPORT_SCHEMA,
+                "REVIEW_MEMORY_SIGNAL_SMOKE",
+                PROVIDER,
+                MODEL,
+                "success",
+                FAILURE_CATEGORY_NONE,
+                "Review memory signal benchmark smoke completed.",
+                jsonPath.toString(),
+                generatedAt,
+                Map.of(
+                        "caseCount", 1,
+                        "completed", 1,
+                        "failed", 0,
+                        "skipped", 0,
+                        "signalCount", secondCreate.path("reviewMemorySignals").size(),
+                        "beforeIssueCount", beforeIssueCount,
+                        "afterIssueCount", afterIssueCount,
+                        "filteredByPriorFeedback", true,
+                        "filteredByPriorFeedbackCount", beforeIssueCount - afterIssueCount
+                )
+        ));
         return new SmokeReport(jsonPath, markdownPath);
     }
 
@@ -366,7 +398,7 @@ class ReviewMemorySignalBenchmarkSmokeTests {
             long secondReviewId,
             int beforeIssueCount,
             int afterIssueCount
-    ) throws IOException {
+    ) throws Exception {
         JsonNode json = objectMapper.readTree(report.jsonPath().toFile());
         assertThat(json.path("schema").asText()).isEqualTo(REPORT_SCHEMA);
         assertThat(json.path("version").asInt()).isEqualTo(REPORT_VERSION);
@@ -414,6 +446,59 @@ class ReviewMemorySignalBenchmarkSmokeTests {
                 .contains("- Filtered by prior feedback: `true`")
                 .contains("- Context coverage reviewMemorySignals: `true`")
                 .contains("REVIEW_FEEDBACK_MEMORY");
+
+        assertReportObservationAvailable(report, project, beforeIssueCount, afterIssueCount);
+    }
+
+    private void assertReportObservationAvailable(
+            SmokeReport report,
+            Project project,
+            int beforeIssueCount,
+            int afterIssueCount
+    ) throws Exception {
+        JsonNode json = objectMapper.readTree(report.jsonPath().toFile());
+        String observationsResponse = mockMvc.perform(get("/api/observations")
+                        .param("projectId", String.valueOf(project.id()))
+                        .param("taskType", "REVIEW_MEMORY_SIGNAL_SMOKE")
+                        .param("lifecycle", "raw")
+                        .param("limit", "20"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode observations = objectMapper.readTree(observationsResponse).path("data");
+        JsonNode observation = null;
+        for (JsonNode candidate : observations) {
+            if (json.path("runId").asText().equals(candidate.path("reportRunId").asText())) {
+                observation = candidate;
+                break;
+            }
+        }
+
+        assertThat(observation).as("report observation for %s", json.path("runId").asText()).isNotNull();
+        assertThat(observation.path("sourceType").asText()).isEqualTo(ObservationSourceType.BENCHMARK_REPORT.value());
+        assertThat(observation.path("sourceStatus").asText()).isEqualTo("success");
+        assertThat(observation.path("provider").asText()).isEqualTo(PROVIDER);
+        assertThat(observation.path("modelName").asText()).isEqualTo(MODEL);
+        assertThat(observation.path("reportPath").asText()).isEqualTo(report.jsonPath().toString());
+        assertThat(observation.path("summary").asText())
+                .contains("caseCount=1")
+                .contains("beforeIssueCount=" + beforeIssueCount)
+                .contains("afterIssueCount=" + afterIssueCount);
+        assertThat(observation.path("errorType").isNull()).isTrue();
+
+        JsonNode metadata = objectMapper.readTree(observation.path("metadataJson").asText());
+        assertThat(metadata.path("suite").asText()).isEqualTo(SUITE);
+        assertThat(metadata.path("reportType").asText()).isEqualTo(REPORT_SCHEMA);
+        assertThat(metadata.path("status").asText()).isEqualTo("success");
+        assertThat(metadata.path("failureCategory").asText()).isEqualTo(FAILURE_CATEGORY_NONE);
+        assertThat(metadata.path("generatedAt").asText()).isEqualTo(json.path("generatedAt").asText());
+        assertThat(metadata.path("summaryMetrics").path("caseCount").asInt()).isEqualTo(1);
+        assertThat(metadata.path("summaryMetrics").path("completed").asInt()).isEqualTo(1);
+        assertThat(metadata.path("summaryMetrics").path("failed").asInt()).isZero();
+        assertThat(metadata.path("summaryMetrics").path("filteredByPriorFeedback").asBoolean()).isTrue();
+        assertThat(metadata.path("summaryMetrics").path("filteredByPriorFeedbackCount").asInt())
+                .isEqualTo(beforeIssueCount - afterIssueCount);
     }
 
     private String joinText(JsonNode values) {

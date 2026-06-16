@@ -3,6 +3,7 @@ package com.devcontext.application.memory;
 import com.devcontext.domain.decision.DecisionReuseRecord;
 import com.devcontext.domain.knowledge.RetrievalRecord;
 import com.devcontext.domain.memory.Observation;
+import com.devcontext.domain.memory.ReportObservationSnapshot;
 import com.devcontext.domain.review.ReviewIssue;
 import com.devcontext.domain.review.ReviewRecord;
 import com.devcontext.domain.run.AgentEvent;
@@ -52,6 +53,10 @@ public class ObservationCaptureService {
 
     public void captureDecisionReuseFeedback(DecisionReuseRecord record) {
         capture("decision reuse feedback " + id(record == null ? null : record.id()), () -> mapper.fromDecisionReuseFeedback(record));
+    }
+
+    public void captureReport(ReportObservationSnapshot report) {
+        capture("report " + (report == null ? "unknown" : report.reportRunId()), () -> mapper.fromReport(report));
     }
 
     private void capture(String label, Supplier<Observation> supplier) {
