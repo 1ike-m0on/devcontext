@@ -2,7 +2,9 @@ package com.devcontext.application.memory;
 
 import com.devcontext.common.error.ApiException;
 import com.devcontext.domain.memory.Observation;
+import com.devcontext.domain.memory.ObservationLifecycle;
 import com.devcontext.ports.memory.ObservationRepository;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -27,6 +29,17 @@ public class ObservationApplicationService {
 
     public List<Observation> listRunObservations(Long runId) {
         return observationRepository.findByRunId(runId);
+    }
+
+    public Observation updateLifecycle(Long observationId, String lifecycle) {
+        ObservationLifecycle normalizedLifecycle = ObservationLifecycle.fromValue(lifecycle)
+                .orElseThrow(() -> new ApiException(
+                        "OBSERVATION_LIFECYCLE_INVALID",
+                        "Invalid observation lifecycle",
+                        HttpStatus.BAD_REQUEST
+                ));
+        return observationRepository.updateLifecycle(observationId, normalizedLifecycle.value(), Instant.now())
+                .orElseThrow(() -> new ApiException("OBSERVATION_NOT_FOUND", "Observation not found", HttpStatus.NOT_FOUND));
     }
 
     private int normalizeLimit(int limit) {

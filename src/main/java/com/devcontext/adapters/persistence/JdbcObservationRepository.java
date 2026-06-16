@@ -129,6 +129,19 @@ public class JdbcObservationRepository implements ObservationRepository {
     }
 
     @Override
+    public Optional<Observation> updateLifecycle(Long id, String lifecycle, Instant updatedAt) {
+        int updated = jdbcTemplate.update("""
+                UPDATE observation
+                SET lifecycle = ?, updated_at = ?
+                WHERE id = ?
+                """, lifecycle, updatedAt.toString(), id);
+        if (updated == 0) {
+            return Optional.empty();
+        }
+        return findById(id);
+    }
+
+    @Override
     public List<Observation> findRecent(Long projectId, String taskType, String lifecycle, int limit) {
         return findRecent(projectId, taskType, lifecycle, null, null, null, limit);
     }
