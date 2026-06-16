@@ -18,6 +18,7 @@ import com.devcontext.domain.codemap.CodeSymbol;
 import com.devcontext.domain.codemap.CodeTechnologySignal;
 import com.devcontext.domain.context.ContextDocument;
 import com.devcontext.domain.profile.ProjectProfile;
+import com.devcontext.domain.profile.ProjectProfileFact;
 import com.devcontext.ports.context.ContextDocumentRepository;
 import com.devcontext.ports.profile.ProjectProfileRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -84,6 +85,12 @@ class ProjectProfileMvpTests {
         assertThat(profile.path("id").asLong()).isPositive();
         assertThat(profile.path("projectId").asLong()).isEqualTo(projectId);
         assertThat(profile.path("status").asText()).isEqualTo("ready");
+        assertFreshness(profile, "no_profile");
+        assertThat(profile.path("freshness").path("lastBuiltAt").asText()).isEqualTo(profile.path("generatedAt").asText());
+        assertThat(profile.path("freshness").path("sourceCount").asInt()).isPositive();
+        assertThat(profile.path("freshness").path("staleReasons"))
+                .extracting(JsonNode::asText)
+                .contains("no_profile");
         assertThat(profile.path("facts")).isNotEmpty();
         assertThat(profile.path("facts"))
                 .anySatisfy(fact -> {
@@ -133,6 +140,12 @@ class ProjectProfileMvpTests {
         ProjectProfile persisted = profileRepository.findByProjectId(projectId).orElseThrow();
         assertThat(persisted.id()).isEqualTo(profile.path("id").asLong());
         assertThat(persisted.facts()).isNotEmpty();
+
+        JsonNode refreshedProfile = readProfile(projectId);
+        assertFreshness(refreshedProfile, "current");
+        assertThat(refreshedProfile.path("freshness").path("lastBuiltAt").asText())
+                .isEqualTo(profile.path("generatedAt").asText());
+        assertThat(refreshedProfile.path("freshness").path("staleReasons")).isEmpty();
     }
 
     @Test
@@ -147,6 +160,10 @@ class ProjectProfileMvpTests {
         JsonNode profile = readProfile(projectId);
 
         assertThat(profile.path("status").asText()).isEqualTo("degraded");
+        assertFreshness(profile, "degraded");
+        assertThat(profile.path("freshness").path("warnings"))
+                .extracting(JsonNode::asText)
+                .anySatisfy(warning -> assertThat(warning).contains("Missing .ai/code-map.json"));
         assertThat(profile.path("facts"))
                 .anySatisfy(fact -> {
                     assertThat(fact.path("factType").asText()).isEqualTo("tech_stack");
@@ -160,6 +177,76 @@ class ProjectProfileMvpTests {
                 .anySatisfy(warning -> assertThat(warning.asText()).contains("No context document records"));
         assertThat(profile.path("warnings"))
                 .anySatisfy(warning -> assertThat(warning.asText()).contains("No indexed knowledge source"));
+    }
+
+    @Test
+    void profileFreshnessReportsMissingSourceReferences() throws Exception {
+        Files.writeString(projectRoot.resolve("pom.xml"), "<project></project>");
+        long projectId = createProject("profile-no-source-demo");
+        Instant old = Instant.parse("2026-01-01T00:00:00Z");
+        profileRepository.upsertByProjectId(new ProjectProfile(
+                null,
+                projectId,
+                "ready",
+                "seeded profile without source references",
+                List.of(new ProjectProfileFact("module", "orders", "order module", List.of())),
+                List.of(),
+                old,
+                old,
+                old
+        ));
+
+        JsonNode profile = readProfile(projectId);
+
+        assertFreshness(profile, "no_source_references");
+        assertThat(profile.path("freshness").path("lastBuiltAt").asText()).isEqualTo(old.toString());
+        assertThat(profile.path("freshness").path("sourceCount").asInt()).isZero();
+        assertThat(profile.path("freshness").path("staleReasons"))
+                .extracting(JsonNode::asText)
+                .contains("no_source_references");
+    }
+
+    @Test
+    void profileFreshnessReportsStaleSourceRecords() throws Exception {
+        createProfileFixture();
+        long projectId = createProject("profile-stale-source-demo");
+        Instant now = Instant.now();
+        contextDocumentRepository.upsert(new ContextDocument(
+                null, projectId, "AGENTS", "AGENTS.md", true, "written", "abc123", now, now));
+        contextDocumentRepository.upsert(new ContextDocument(
+                null, projectId, "CODE_MAP", ".ai/code-map.json", true, "written", "abc123", now, now));
+        contextDocumentRepository.upsert(new ContextDocument(
+                null, projectId, "BUSINESS_CONTEXT", ".ai/manual/business-context.md", false, "written", null, now, now));
+        var source = knowledgeIndexService.createSource(new CreateKnowledgeSourceCommand(
+                "profile stale source knowledge",
+                projectRoot.toString(),
+                "project_ai_docs"
+        ));
+        knowledgeIndexService.indexSource(source.id());
+
+        JsonNode profile = readProfile(projectId);
+        Instant staleUpdatedAt = Instant.parse(profile.path("generatedAt").asText()).plusSeconds(60);
+        contextDocumentRepository.upsert(new ContextDocument(
+                null,
+                projectId,
+                "BUSINESS_CONTEXT",
+                ".ai/manual/business-context.md",
+                false,
+                "written",
+                null,
+                now,
+                staleUpdatedAt
+        ));
+
+        JsonNode staleProfile = readProfile(projectId);
+
+        assertFreshness(staleProfile, "stale_source");
+        assertThat(staleProfile.path("freshness").path("lastBuiltAt").asText())
+                .isEqualTo(profile.path("generatedAt").asText());
+        assertThat(staleProfile.path("freshness").path("sourceCount").asInt()).isPositive();
+        assertThat(staleProfile.path("freshness").path("staleReasons"))
+                .extracting(JsonNode::asText)
+                .contains("context_document_newer");
     }
 
     private long createProject(String name) throws Exception {
@@ -184,6 +271,10 @@ class ProjectProfileMvpTests {
                 .getResponse()
                 .getContentAsString();
         return objectMapper.readTree(response).path("data");
+    }
+
+    private void assertFreshness(JsonNode profile, String status) {
+        assertThat(profile.path("freshness").path("freshnessStatus").asText()).isEqualTo(status);
     }
 
     private void createProfileFixture() throws Exception {

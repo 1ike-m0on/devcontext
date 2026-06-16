@@ -14,6 +14,8 @@ import com.devcontext.domain.knowledge.KnowledgeEvidenceType;
 import com.devcontext.domain.knowledge.KnowledgeSource;
 import com.devcontext.domain.profile.ProjectProfile;
 import com.devcontext.domain.profile.ProjectProfileFact;
+import com.devcontext.domain.profile.ProjectProfileFreshnessSummary;
+import com.devcontext.domain.profile.ProjectProfileResponse;
 import com.devcontext.domain.profile.ProjectProfileSourceReference;
 import com.devcontext.domain.project.Project;
 import com.devcontext.ports.context.ContextDocumentRepository;
@@ -67,6 +69,22 @@ public class ProjectProfileApplicationService {
     public ProjectProfile getProfile(Long projectId) {
         Project project = projectService.getProject(projectId);
         Optional<ProjectProfile> existing = profileRepository.findByProjectId(projectId);
+        return buildProfile(project, existing);
+    }
+
+    public ProjectProfileResponse getProfileResponse(Long projectId) {
+        Project project = projectService.getProject(projectId);
+        Optional<ProjectProfile> existing = profileRepository.findByProjectId(projectId);
+        ProjectProfile profile = buildProfile(project, existing);
+        ProjectProfile freshnessBasis = existing.orElse(profile);
+        return ProjectProfileResponse.from(
+                profile,
+                freshnessSummary(project, freshnessBasis, existing.isEmpty(), profile.warnings())
+        );
+    }
+
+    private ProjectProfile buildProfile(Project project, Optional<ProjectProfile> existing) {
+        Long projectId = project.id();
         Instant now = Instant.now();
         List<ProjectProfileFact> facts = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
@@ -90,6 +108,133 @@ public class ProjectProfileApplicationService {
                 now
         );
         return profileRepository.upsertByProjectId(profile);
+    }
+
+    private ProjectProfileFreshnessSummary freshnessSummary(
+            Project project,
+            ProjectProfile profile,
+            boolean missingBeforeBuild,
+            List<String> currentWarnings
+    ) {
+        Instant lastBuiltAt = profile == null ? null : profile.generatedAt();
+        Set<String> sourcePaths = sourcePaths(profile);
+        List<String> staleReasons = new ArrayList<>();
+        List<String> warnings = new ArrayList<>(safeList(currentWarnings));
+        if (missingBeforeBuild) {
+            staleReasons.add("no_profile");
+        }
+        if (sourcePaths.isEmpty()) {
+            staleReasons.add("no_source_references");
+        }
+        if (lastBuiltAt != null) {
+            addNewerSourceArtifactReasons(project, sourcePaths, lastBuiltAt, staleReasons);
+            addNewerContextDocumentReasons(project.id(), lastBuiltAt, staleReasons);
+            addNewerKnowledgeSourceReasons(project, lastBuiltAt, staleReasons);
+        }
+        staleReasons = staleReasons.stream().distinct().toList();
+        warnings = warnings.stream().distinct().toList();
+        return new ProjectProfileFreshnessSummary(
+                freshnessStatus(profile, missingBeforeBuild, sourcePaths.size(), staleReasons, warnings),
+                lastBuiltAt,
+                sourcePaths.size(),
+                staleReasons,
+                warnings
+        );
+    }
+
+    private String freshnessStatus(
+            ProjectProfile profile,
+            boolean missingBeforeBuild,
+            int sourceCount,
+            List<String> staleReasons,
+            List<String> warnings
+    ) {
+        boolean staleSource = staleReasons.stream().anyMatch(reason -> reason.endsWith("_newer"));
+        if (staleSource) {
+            return "stale_source";
+        }
+        if (sourceCount == 0) {
+            return "no_source_references";
+        }
+        if (profile != null && !"ready".equalsIgnoreCase(profile.status())) {
+            return "degraded";
+        }
+        if (!warnings.isEmpty() && hasDegradedSource(warnings)) {
+            return "degraded";
+        }
+        if (missingBeforeBuild) {
+            return "no_profile";
+        }
+        return "current";
+    }
+
+    private Set<String> sourcePaths(ProjectProfile profile) {
+        Set<String> sourcePaths = new LinkedHashSet<>();
+        if (profile == null) {
+            return sourcePaths;
+        }
+        for (ProjectProfileFact fact : safeList(profile.facts())) {
+            for (ProjectProfileSourceReference reference : safeList(fact.sourceReferences())) {
+                if (!isBlank(reference.sourcePath())) {
+                    sourcePaths.add(reference.sourcePath().trim());
+                }
+            }
+        }
+        return sourcePaths;
+    }
+
+    private void addNewerSourceArtifactReasons(
+            Project project,
+            Set<String> sourcePaths,
+            Instant lastBuiltAt,
+            List<String> staleReasons
+    ) {
+        Path root = Path.of(project.rootPath()).toAbsolutePath().normalize();
+        for (String sourcePath : sourcePaths) {
+            Path resolved = resolveSourcePath(root, sourcePath);
+            if (resolved == null || !Files.isRegularFile(resolved)) {
+                continue;
+            }
+            try {
+                if (Files.getLastModifiedTime(resolved).toInstant().isAfter(lastBuiltAt)) {
+                    staleReasons.add("source_artifact_newer");
+                }
+            } catch (IOException ignored) {
+                // Freshness is advisory; unreadable source mtimes should not block profile reads.
+            }
+        }
+    }
+
+    private void addNewerContextDocumentReasons(Long projectId, Instant lastBuiltAt, List<String> staleReasons) {
+        for (ContextDocument document : contextDocumentRepository.findByProjectId(projectId)) {
+            if (document.updatedAt() != null && document.updatedAt().isAfter(lastBuiltAt)) {
+                staleReasons.add("context_document_newer");
+                return;
+            }
+        }
+    }
+
+    private void addNewerKnowledgeSourceReasons(Project project, Instant lastBuiltAt, List<String> staleReasons) {
+        boolean newer = knowledgeSourceRepository.findAll().stream()
+                .filter(source -> samePath(project.rootPath(), source.rootPath()))
+                .anyMatch(source -> source.updatedAt() != null && source.updatedAt().isAfter(lastBuiltAt));
+        if (newer) {
+            staleReasons.add("knowledge_source_newer");
+        }
+    }
+
+    private Path resolveSourcePath(Path root, String sourcePath) {
+        try {
+            Path raw = Path.of(sourcePath);
+            Path resolved = raw.isAbsolute() ? raw : root.resolve(raw);
+            resolved = resolved.toAbsolutePath().normalize();
+            if (!resolved.startsWith(root)) {
+                return null;
+            }
+            return resolved;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private void addProjectFacts(Project project, List<ProjectProfileFact> facts) {
