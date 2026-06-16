@@ -5,7 +5,9 @@ import com.devcontext.common.api.ApiResponse;
 import com.devcontext.domain.memory.Observation;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -44,8 +46,24 @@ public class ObservationController {
         return ApiResponse.ok(observationService.getObservation(observationId));
     }
 
+    @PatchMapping("/api/observations/{observationId}/lifecycle")
+    public ApiResponse<Observation> updateLifecycle(
+            @PathVariable Long observationId,
+            @RequestBody(required = false) UpdateLifecycleRequest request
+    ) {
+        return ApiResponse.ok(observationService.updateLifecycle(
+                observationId,
+                request == null ? null : request.lifecycle()
+        ));
+    }
+
     @GetMapping("/api/agent-runs/{runId}/observations")
     public ApiResponse<List<Observation>> listRunObservations(@PathVariable Long runId) {
         return ApiResponse.ok(observationService.listRunObservations(runId));
+    }
+
+    public record UpdateLifecycleRequest(
+            String lifecycle
+    ) {
     }
 }
