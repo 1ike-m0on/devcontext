@@ -54,15 +54,18 @@ public class LlmSettingsController {
             String model,
             String apiKey,
             String geminiApiKey,
-            String deepseekApiKey
+            String deepseekApiKey,
+            String timeout,
+            String geminiTimeout,
+            String deepseekTimeout
     ) {
 
         static LlmSettingsUpdateRequest empty() {
-            return new LlmSettingsUpdateRequest(null, null, null, null, null);
+            return new LlmSettingsUpdateRequest(null, null, null, null, null, null, null, null);
         }
 
         LlmSettingsApplicationService.UpdateCommand toCommand() {
-            return new LlmSettingsApplicationService.UpdateCommand(provider, model, selectedApiKey());
+            return new LlmSettingsApplicationService.UpdateCommand(provider, model, selectedApiKey(), selectedTimeout());
         }
 
         private String selectedApiKey() {
@@ -73,6 +76,16 @@ public class LlmSettingsController {
                 return deepseekApiKey;
             }
             return apiKey;
+        }
+
+        private String selectedTimeout() {
+            if ("gemini".equalsIgnoreCase(provider) && hasText(geminiTimeout)) {
+                return geminiTimeout;
+            }
+            if ("deepseek".equalsIgnoreCase(provider) && hasText(deepseekTimeout)) {
+                return deepseekTimeout;
+            }
+            return timeout;
         }
 
         private boolean hasText(String value) {

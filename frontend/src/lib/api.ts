@@ -26,6 +26,7 @@ export type Health = {
 export type LlmProviderStatus = {
   provider: string;
   model: string;
+  timeout?: string | null;
   status: string;
   keyRequired: boolean;
   keyConfigured: boolean;
@@ -35,6 +36,7 @@ export type LlmProviderStatus = {
 export type PendingLlmSettings = {
   provider: string;
   model: string;
+  timeout?: string | null;
   status: string;
   keyConfigured: boolean;
   keyStatus: string;
@@ -44,6 +46,7 @@ export type PendingLlmSettings = {
 export type LlmSettings = {
   provider: string;
   model: string;
+  timeout?: string | null;
   status: string;
   keyStatus: string;
   keyConfigured: boolean;
@@ -60,6 +63,9 @@ export type LlmSettings = {
 export type LlmSettingsUpdate = {
   provider: string;
   model: string;
+  timeout?: string | null;
+  geminiTimeout?: string | null;
+  deepseekTimeout?: string | null;
   apiKey?: string | null;
   geminiApiKey?: string | null;
   deepseekApiKey?: string | null;
@@ -68,6 +74,7 @@ export type LlmSettingsUpdate = {
 export type LlmConnectionCheckResult = {
   provider: string;
   model: string;
+  timeout?: string | null;
   success: boolean;
   failureCategory: string;
   messageSummary: string;

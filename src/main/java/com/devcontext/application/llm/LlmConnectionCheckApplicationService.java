@@ -43,6 +43,7 @@ public class LlmConnectionCheckApplicationService {
             return new LlmConnectionCheckResult(
                     status.provider(),
                     status.model(),
+                    status.timeout(),
                     true,
                     SUCCESS_CATEGORY,
                     "LLM provider connection check succeeded.",
@@ -73,6 +74,7 @@ public class LlmConnectionCheckApplicationService {
         return new LlmConnectionCheckResult(
                 status.provider(),
                 status.model(),
+                status.timeout(),
                 false,
                 normalizeFailureCategory(failureCategory),
                 sanitizeMessage(message),
@@ -142,6 +144,7 @@ public class LlmConnectionCheckApplicationService {
     public record LlmConnectionCheckResult(
             String provider,
             String model,
+            String timeout,
             boolean success,
             String failureCategory,
             String messageSummary,

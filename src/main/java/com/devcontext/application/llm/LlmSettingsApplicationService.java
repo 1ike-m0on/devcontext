@@ -1,13 +1,18 @@
 package com.devcontext.application.llm;
 
 import com.devcontext.config.DevContextLlmProperties;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 
 @Service
 public class LlmSettingsApplicationService {
+
+    private static final Pattern SIMPLE_DURATION_PATTERN = Pattern.compile("^(\\d+)(ms|s|m|h)?$");
 
     private final DevContextLlmProperties properties;
     private final LlmRuntimeStatus runtimeStatus;
@@ -31,6 +36,7 @@ public class LlmSettingsApplicationService {
         return new LlmSettingsStatus(
                 activeProvider.provider(),
                 activeProvider.model(),
+                activeProvider.timeout(),
                 activeProvider.status(),
                 activeProvider.keyStatus(),
                 activeProvider.keyConfigured(),
@@ -56,8 +62,9 @@ public class LlmSettingsApplicationService {
         }
 
         String model = normalizeValue(command.model(), modelForProvider(provider));
+        String timeout = normalizeTimeout(command.timeout(), timeoutForProvider(provider));
         String apiKey = normalizeValue(command.apiKey(), null);
-        localSettingsStore.save(new LocalLlmSettingsStore.SaveCommand(provider, model, apiKey));
+        localSettingsStore.save(new LocalLlmSettingsStore.SaveCommand(provider, model, apiKey, timeout));
         return status();
     }
 
@@ -75,22 +82,23 @@ public class LlmSettingsApplicationService {
 
     private ProviderStatus providerStatus(String provider) {
         if ("mock".equals(provider)) {
-            return new ProviderStatus("mock", properties.mock().model(), "ready", false, false, "not_required");
+            return new ProviderStatus("mock", properties.mock().model(), null, "ready", false, false, "not_required");
         }
         if ("gemini".equals(provider)) {
-            return keyedProviderStatus("gemini", properties.gemini().model(), properties.gemini().apiKey());
+            return keyedProviderStatus("gemini", properties.gemini().model(), properties.gemini().apiKey(), properties.gemini().timeout());
         }
         if ("deepseek".equals(provider)) {
-            return keyedProviderStatus("deepseek", properties.deepseek().model(), properties.deepseek().apiKey());
+            return keyedProviderStatus("deepseek", properties.deepseek().model(), properties.deepseek().apiKey(), properties.deepseek().timeout());
         }
-        return new ProviderStatus(provider, properties.modelName(), "unsupported_provider", true, false, "missing");
+        return new ProviderStatus(provider, properties.modelName(), null, "unsupported_provider", true, false, "missing");
     }
 
-    private ProviderStatus keyedProviderStatus(String provider, String model, String apiKey) {
+    private ProviderStatus keyedProviderStatus(String provider, String model, String apiKey, Duration timeout) {
         boolean keyConfigured = apiKey != null && !apiKey.isBlank();
         return new ProviderStatus(
                 provider,
                 model,
+                formatDuration(timeout),
                 keyConfigured ? "ready" : "missing_key",
                 true,
                 keyConfigured,
@@ -103,6 +111,7 @@ public class LlmSettingsApplicationService {
             return null;
         }
         String model = normalizeValue(pending.model(), modelForProvider(pending.provider()));
+        String timeout = normalizeTimeout(pending.timeout(), timeoutForProvider(pending.provider()));
         boolean keyRequired = isKeyedProvider(pending.provider());
         boolean keyConfigured = keyRequired
                 && (hasText(pending.apiKey())
@@ -111,6 +120,7 @@ public class LlmSettingsApplicationService {
         return new PendingProviderStatus(
                 pending.provider(),
                 model,
+                timeout,
                 missingRequiredKey ? "missing_key" : "ready",
                 keyConfigured,
                 keyRequired ? (missingRequiredKey ? "missing" : "configured") : "not_required",
@@ -130,6 +140,10 @@ public class LlmSettingsApplicationService {
         if (!model.equals(modelForProvider(provider))) {
             return true;
         }
+        String timeout = normalizeTimeout(pending.timeout(), timeoutForProvider(provider));
+        if (isKeyedProvider(provider) && !timeout.equals(timeoutForProvider(provider))) {
+            return true;
+        }
         return isKeyedProvider(provider)
                 && hasText(pending.apiKey())
                 && !pending.apiKey().equals(activeApiKey(provider));
@@ -143,6 +157,16 @@ public class LlmSettingsApplicationService {
             return properties.deepseek().model();
         }
         return properties.mock().model();
+    }
+
+    private String timeoutForProvider(String provider) {
+        if ("gemini".equals(provider)) {
+            return formatDuration(properties.gemini().timeout());
+        }
+        if ("deepseek".equals(provider)) {
+            return formatDuration(properties.deepseek().timeout());
+        }
+        return null;
     }
 
     private String activeApiKey(String provider) {
@@ -177,9 +201,62 @@ public class LlmSettingsApplicationService {
         return value.trim();
     }
 
+    private String normalizeTimeout(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return formatDuration(parseTimeout(value));
+    }
+
+    private Duration parseTimeout(String value) {
+        String trimmed = value.trim();
+        if (trimmed.startsWith("P") || trimmed.startsWith("p")) {
+            Duration duration = Duration.parse(trimmed.toUpperCase(Locale.ROOT));
+            if (duration.isZero() || duration.isNegative()) {
+                throw new IllegalArgumentException("LLM provider timeout must be greater than 0");
+            }
+            return duration;
+        }
+
+        Matcher matcher = SIMPLE_DURATION_PATTERN.matcher(trimmed.toLowerCase(Locale.ROOT));
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException("LLM provider timeout must use seconds, ms, m, h, or ISO-8601 duration");
+        }
+        long amount = Long.parseLong(matcher.group(1));
+        if (amount <= 0) {
+            throw new IllegalArgumentException("LLM provider timeout must be greater than 0");
+        }
+        String unit = matcher.group(2);
+        if ("ms".equals(unit)) {
+            return Duration.ofMillis(amount);
+        }
+        if ("m".equals(unit)) {
+            return Duration.ofMinutes(amount);
+        }
+        if ("h".equals(unit)) {
+            return Duration.ofHours(amount);
+        }
+        return Duration.ofSeconds(amount);
+    }
+
+    private String formatDuration(Duration duration) {
+        if (duration == null) {
+            return null;
+        }
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException("LLM provider timeout must be greater than 0");
+        }
+        long millis = duration.toMillis();
+        if (millis % 1000 == 0) {
+            return duration.toSeconds() + "s";
+        }
+        return millis + "ms";
+    }
+
     public record LlmSettingsStatus(
             String provider,
             String model,
+            String timeout,
             String status,
             String keyStatus,
             boolean keyConfigured,
@@ -197,6 +274,7 @@ public class LlmSettingsApplicationService {
     public record ProviderStatus(
             String provider,
             String model,
+            String timeout,
             String status,
             boolean keyRequired,
             boolean keyConfigured,
@@ -207,6 +285,7 @@ public class LlmSettingsApplicationService {
     public record PendingProviderStatus(
             String provider,
             String model,
+            String timeout,
             String status,
             boolean keyConfigured,
             String keyStatus,
@@ -227,12 +306,13 @@ public class LlmSettingsApplicationService {
     public record UpdateCommand(
             String provider,
             String model,
-            String apiKey
+            String apiKey,
+            String timeout
     ) {
 
         @Override
         public String toString() {
-            return "UpdateCommand[provider=" + provider + ", model=" + model + ", apiKey=[masked]]";
+            return "UpdateCommand[provider=" + provider + ", model=" + model + ", apiKey=[masked], timeout=" + timeout + "]";
         }
     }
 }
