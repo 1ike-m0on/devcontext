@@ -157,7 +157,7 @@ public class CodeMapGenerator {
                     "source",
                     "Java",
                     businessModule(file),
-                    List.of(symbolRole(file))
+                    fileRoles(file)
             ));
         }
         for (String configFile : scan.configFiles()) {
@@ -322,13 +322,20 @@ public class CodeMapGenerator {
                 || className.endsWith("Controller")) {
             return "controller";
         }
-        if (file.annotations().contains("@Service") || lowerPath.contains("/service/")) {
+        if (file.annotations().contains("@Service") || className.endsWith("Service")
+                || className.endsWith("ServiceImpl") || lowerPath.contains("/service/")) {
             return "service";
+        }
+        if (file.annotations().contains("@Repository") || className.endsWith("Repository")
+                || className.endsWith("Dao") || lowerPath.contains("/repository/")
+                || lowerPath.contains("/dao/")) {
+            return "repository";
         }
         if (className.endsWith("Mapper") || lowerPath.contains("/mapper/")) {
             return "mapper";
         }
-        if (className.endsWith("Entity") || lowerPath.contains("/entity/")) {
+        if (file.annotations().contains("@Entity") || file.annotations().contains("@Table")
+                || className.endsWith("Entity") || lowerPath.contains("/entity/")) {
             return "entity";
         }
         if (file.annotations().contains("@Configuration") || lowerPath.contains("/config/")) {
@@ -342,6 +349,36 @@ public class CodeMapGenerator {
             return "component";
         }
         return "support";
+    }
+
+    private List<String> fileRoles(ScannedJavaFile file) {
+        LinkedHashSet<String> roles = new LinkedHashSet<>();
+        String primaryRole = symbolRole(file);
+        roles.add(primaryRole);
+        if (!file.endpoints().isEmpty()) {
+            roles.add("endpoint");
+        }
+        if (isSpringComponent(file)) {
+            roles.add("spring-component");
+        }
+        if (primaryRole.equals("repository") || primaryRole.equals("mapper")) {
+            roles.add("data-access");
+        }
+        if (primaryRole.equals("entity")) {
+            roles.add("domain-entity");
+        }
+        return roles.stream()
+                .filter(role -> role != null && !role.isBlank())
+                .toList();
+    }
+
+    private boolean isSpringComponent(ScannedJavaFile file) {
+        return file.annotations().contains("@RestController")
+                || file.annotations().contains("@Controller")
+                || file.annotations().contains("@Service")
+                || file.annotations().contains("@Repository")
+                || file.annotations().contains("@Component")
+                || file.annotations().contains("@Configuration");
     }
 
     private String runtimeComponentType(ScannedJavaFile file) {
@@ -516,7 +553,7 @@ public class CodeMapGenerator {
     private static final Set<String> STOP_WORDS = Set.of(
             "src", "main", "java", "test", "github", "com", "org", "net", "io",
             "acme", "lifeservice",
-            "controller", "service", "impl", "mapper", "entity", "dto", "request", "response",
+            "controller", "service", "impl", "repository", "dao", "mapper", "entity", "dto", "request", "response",
             "config", "configuration", "common", "infrastructure", "application", "domain",
             "get", "post", "put", "delete", "patch", "api", "class", "method", "handler",
             "list", "page", "query", "create", "update", "find", "execute", "path", "string"

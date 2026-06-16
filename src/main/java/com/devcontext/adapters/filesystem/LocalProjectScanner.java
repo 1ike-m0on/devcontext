@@ -9,9 +9,11 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -37,10 +39,12 @@ public class LocalProjectScanner implements ProjectScanner {
             "logs"
     );
     private static final Pattern PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([\\w.]+)\\s*;");
-    private static final Pattern METHOD_PATTERN = Pattern.compile("\\b(public|protected|private)\\s+[^=;{}]+\\s+(\\w+)\\s*\\(");
+    private static final Pattern DECLARED_METHOD_PATTERN = Pattern.compile("\\b(public|protected|private)\\s+[^=;{}]+\\s+(\\w+)\\s*\\(");
+    private static final Pattern INTERFACE_METHOD_PATTERN = Pattern.compile("^(?:[\\w.$<>?,\\[\\]]+\\s+)+(\\w+)\\s*\\([^;{}]*\\)\\s*;");
     private static final Pattern FIELD_DEPENDENCY_PATTERN = Pattern.compile("(?m)^\\s*(?:@\\w+(?:\\([^\\n]*\\))?\\s*)*(?:private|protected|public)\\s+(?:final\\s+)?([A-Z][\\w.$]*(?:<[^;]+>)?)\\s+\\w+\\s*(?:=[^;]*)?;");
     private static final Pattern MAPPING_PATTERN = Pattern.compile("@(RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping)\\s*(?:\\(([^)]*)\\))?");
-    private static final Pattern CLASS_PATTERN = Pattern.compile("\\bclass\\s+(\\w+)\\b");
+    private static final Pattern TYPE_PATTERN = Pattern.compile("\\b(class|interface|record|enum)\\s+(\\w+)\\b");
+    private static final Set<String> CONTROL_KEYWORDS = Set.of("if", "for", "while", "switch", "catch", "return", "throw");
 
     @Override
     public ProjectScan scan(String rootPath) {
@@ -188,15 +192,38 @@ public class LocalProjectScanner implements ProjectScanner {
     }
 
     private List<String> extractMethods(String content) {
-        List<String> methods = new ArrayList<>();
-        Matcher matcher = METHOD_PATTERN.matcher(content);
+        LinkedHashSet<String> methods = new LinkedHashSet<>();
+        Matcher matcher = DECLARED_METHOD_PATTERN.matcher(content);
         while (matcher.find() && methods.size() < 30) {
-            String methodName = matcher.group(2);
-            if (!methodName.equals("if") && !methodName.equals("for") && !methodName.equals("while")) {
-                methods.add(methodName);
+            addMethod(methods, matcher.group(2));
+        }
+        if (isInterfaceType(content)) {
+            for (String rawLine : content.lines().toList()) {
+                if (methods.size() >= 30) {
+                    break;
+                }
+                String line = rawLine.trim();
+                if (line.startsWith("@") || line.startsWith("//") || line.contains("=") || !line.endsWith(";")) {
+                    continue;
+                }
+                Matcher interfaceMethodMatcher = INTERFACE_METHOD_PATTERN.matcher(line);
+                if (interfaceMethodMatcher.find()) {
+                    addMethod(methods, interfaceMethodMatcher.group(1));
+                }
             }
         }
-        return methods.stream().distinct().toList();
+        return methods.stream().toList();
+    }
+
+    private boolean isInterfaceType(String content) {
+        return TYPE_PATTERN.matcher(content).results()
+                .anyMatch(match -> "interface".equals(match.group(1)));
+    }
+
+    private void addMethod(Set<String> methods, String methodName) {
+        if (methodName != null && !methodName.isBlank() && !CONTROL_KEYWORDS.contains(methodName)) {
+            methods.add(methodName);
+        }
     }
 
     private List<String> extractEndpoints(String content) {
@@ -210,13 +237,13 @@ public class LocalProjectScanner implements ProjectScanner {
                 pendingMappings.add(mappingMatcher.group(1) + " " + extractMappingPath(mappingMatcher.group(2)));
             }
 
-            if (CLASS_PATTERN.matcher(line).find()) {
+            if (TYPE_PATTERN.matcher(line).find()) {
                 classPath = firstMappingPath(pendingMappings);
                 pendingMappings.clear();
                 continue;
             }
 
-            Matcher methodMatcher = METHOD_PATTERN.matcher(line);
+            Matcher methodMatcher = DECLARED_METHOD_PATTERN.matcher(line);
             if (methodMatcher.find()) {
                 for (String mapping : pendingMappings) {
                     String[] parts = mapping.split(" ", 2);
