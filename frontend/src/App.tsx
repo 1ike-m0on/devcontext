@@ -2526,6 +2526,7 @@ function SettingsWorkspace({
   const pendingOrActive = settings?.pending ?? settings;
   const [provider, setProvider] = useState(pendingOrActive?.provider ?? "mock");
   const [model, setModel] = useState(pendingOrActive?.model ?? "mock-llm");
+  const [timeoutSeconds, setTimeoutSeconds] = useState(timeoutToSecondsInput(pendingOrActive?.timeout));
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [connectionCheckResult, setConnectionCheckResult] = useState<LlmConnectionCheckResult | null>(null);
@@ -2535,7 +2536,16 @@ function SettingsWorkspace({
     if (!next) return;
     setProvider(next.provider);
     setModel(next.model);
-  }, [settings?.provider, settings?.model, settings?.pending?.provider, settings?.pending?.model]);
+    const providerDefault = providers.find((item) => item.provider === next.provider)?.timeout;
+    setTimeoutSeconds(timeoutToSecondsInput(next.timeout ?? providerDefault));
+  }, [
+    settings?.provider,
+    settings?.model,
+    settings?.timeout,
+    settings?.pending?.provider,
+    settings?.pending?.model,
+    settings?.pending?.timeout,
+  ]);
 
   const selectedProvider = providers.find((item) => item.provider === provider) ?? providers[0];
 
@@ -2544,6 +2554,7 @@ function SettingsWorkspace({
     setProvider(nextProvider);
     const nextStatus = providers.find((item) => item.provider === nextProvider);
     setModel(nextStatus?.model ?? "mock-llm");
+    setTimeoutSeconds(timeoutToSecondsInput(nextStatus?.timeout));
   }
 
   const saveSettings = useMutation({
@@ -2551,12 +2562,25 @@ function SettingsWorkspace({
       const body: {
         provider: string;
         model: string;
+        timeout?: string | null;
+        geminiTimeout?: string | null;
+        deepseekTimeout?: string | null;
         geminiApiKey?: string | null;
         deepseekApiKey?: string | null;
       } = {
         provider,
         model: model.trim(),
       };
+      const timeout = timeoutPayload(provider, timeoutSeconds);
+      if (timeout) {
+        body.timeout = timeout;
+        if (provider === "gemini") {
+          body.geminiTimeout = timeout;
+        }
+        if (provider === "deepseek") {
+          body.deepseekTimeout = timeout;
+        }
+      }
       if (provider === "gemini" && geminiApiKey.trim()) {
         body.geminiApiKey = geminiApiKey.trim();
       }
@@ -2591,6 +2615,7 @@ function SettingsWorkspace({
       setConnectionCheckResult({
         provider: settings?.provider ?? provider,
         model: settings?.model ?? (model.trim() || "-"),
+        timeout: settings?.timeout ?? selectedProvider?.timeout,
         success: false,
         failureCategory: classifyConnectionCheckRequestError(message),
         messageSummary: message,
@@ -2620,14 +2645,15 @@ function SettingsWorkspace({
               <EmptyState text="正在加载 LLM 设置。" />
             ) : (
               <>
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-4">
                   <MetricTile label="当前 provider" value={settings?.provider ?? "-"} tone={settings?.status === "ready" ? "success" : "warning"} />
                   <MetricTile label="当前 model" value={settings?.model ?? "-"} />
+                  <MetricTile label="当前 timeout" value={formatTimeoutLabel(settings?.timeout)} />
                   <MetricTile label="key 状态" value={settings?.keyStatus ?? "-"} tone={settings?.keyConfigured ? "success" : "warning"} />
                 </div>
 
                 <div className="grid gap-4 rounded-lg border border-border bg-background p-4">
-                  <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
+                  <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_180px]">
                     <Label>
                       Provider
                       <select
@@ -2652,6 +2678,22 @@ function SettingsWorkspace({
                           setModel(event.target.value);
                         }}
                         placeholder={selectedProvider?.model ?? "model"}
+                      />
+                    </Label>
+                    <Label>
+                      Timeout (s)
+                      <Input
+                        className="mt-1"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={timeoutSeconds}
+                        onChange={(event) => {
+                          setConnectionCheckResult(null);
+                          setTimeoutSeconds(event.target.value);
+                        }}
+                        placeholder={timeoutToSecondsInput(selectedProvider?.timeout) || "-"}
+                        disabled={provider === "mock"}
                       />
                     </Label>
                   </div>
@@ -2693,13 +2735,14 @@ function SettingsWorkspace({
                       <Badge variant={selectedProvider?.keyConfigured ? "success" : selectedProvider?.keyRequired ? "warning" : "secondary"}>
                         key {selectedProvider?.keyStatus ?? "unknown"}
                       </Badge>
+                      <Badge variant="secondary">timeout {formatTimeoutLabel(selectedProvider?.timeout)}</Badge>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="secondary" onClick={() => testConnection.mutate()} disabled={testConnection.isPending || loading}>
                         {testConnection.isPending ? <Loader2 className="size-4 animate-spin" /> : <Activity className="size-4" />}
                         测试连接
                       </Button>
-                      <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || !model.trim()}>
+                      <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || !model.trim() || (provider !== "mock" && !timeoutSeconds.trim())}>
                         {saveSettings.isPending ? <Loader2 className="size-4 animate-spin" /> : <Settings2 className="size-4" />}
                         保存设置
                       </Button>
@@ -2729,6 +2772,7 @@ function SettingsWorkspace({
               <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
                 <StateLine label="provider" value={settings?.provider ?? "-"} />
                 <StateLine label="model" value={settings?.model ?? "-"} />
+                <StateLine label="timeout" value={formatTimeoutLabel(settings?.timeout)} />
                 <StateLine label="key" value={settings?.keyStatus ?? "-"} />
                 <StateLine label="最近调用" value={settings?.lastCallStatus ?? "-"} />
                 <StateLine label="最近错误" value={settings?.lastErrorType ?? "-"} />
@@ -2751,6 +2795,7 @@ function SettingsWorkspace({
                 <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
                   <StateLine label="provider" value={settings.pending.provider} />
                   <StateLine label="model" value={settings.pending.model} />
+                  <StateLine label="timeout" value={formatTimeoutLabel(settings.pending.timeout)} />
                   <StateLine label="key" value={settings.pending.keyStatus} />
                   <StateLine label="config" value={settings.pending.localConfigPath} />
                 </div>
@@ -2807,6 +2852,7 @@ function LlmConnectionCheckResultPanel({
         <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
           <StateLine label="provider" value={result.provider || "-"} />
           <StateLine label="model" value={result.model || "-"} />
+          <StateLine label="timeout" value={formatTimeoutLabel(result.timeout)} />
           <StateLine label="success" value={result.success ? "true" : "false"} />
           <StateLine label="failureCategory" value={result.failureCategory || "-"} />
           <StateLine label="message" value={result.messageSummary || "-"} />
@@ -2820,10 +2866,43 @@ function LlmConnectionCheckResultPanel({
 
 function defaultLlmProviders(): LlmProviderStatus[] {
   return [
-    { provider: "mock", model: "mock-llm", status: "ready", keyRequired: false, keyConfigured: false, keyStatus: "not_required" },
-    { provider: "gemini", model: "gemini-2.0-flash", status: "missing_key", keyRequired: true, keyConfigured: false, keyStatus: "missing" },
-    { provider: "deepseek", model: "deepseek-chat", status: "missing_key", keyRequired: true, keyConfigured: false, keyStatus: "missing" },
+    { provider: "mock", model: "mock-llm", timeout: null, status: "ready", keyRequired: false, keyConfigured: false, keyStatus: "not_required" },
+    { provider: "gemini", model: "gemini-2.0-flash", timeout: "60s", status: "missing_key", keyRequired: true, keyConfigured: false, keyStatus: "missing" },
+    { provider: "deepseek", model: "deepseek-chat", timeout: "120s", status: "missing_key", keyRequired: true, keyConfigured: false, keyStatus: "missing" },
   ];
+}
+
+function timeoutToSecondsInput(timeout?: string | null) {
+  if (!timeout) return "";
+  const normalized = timeout.trim().toLowerCase();
+  const simple = normalized.match(/^(\d+)(ms|s|m|h)?$/);
+  if (simple) {
+    const amount = Number(simple[1]);
+    const unit = simple[2] ?? "s";
+    if (unit === "ms") return String(Math.max(1, Math.ceil(amount / 1000)));
+    if (unit === "m") return String(amount * 60);
+    if (unit === "h") return String(amount * 3600);
+    return String(amount);
+  }
+  const iso = normalized.match(/^pt(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  if (iso) {
+    const hours = Number(iso[1] ?? 0);
+    const minutes = Number(iso[2] ?? 0);
+    const seconds = Number(iso[3] ?? 0);
+    return String(hours * 3600 + minutes * 60 + seconds);
+  }
+  return "";
+}
+
+function timeoutPayload(provider: string, timeoutSeconds: string) {
+  if (provider === "mock") return null;
+  const seconds = Number(timeoutSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return `${Math.round(seconds)}s`;
+}
+
+function formatTimeoutLabel(timeout?: string | null) {
+  return timeout && timeout.trim() ? timeout : "-";
 }
 
 function providerLabel(provider: string) {

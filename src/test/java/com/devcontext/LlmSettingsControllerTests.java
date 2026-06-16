@@ -43,7 +43,8 @@ import org.springframework.test.web.servlet.MockMvc;
         "devcontext.local-config-root=target/llm-settings-controller-test",
         "devcontext.llm.provider=gemini",
         "devcontext.llm.gemini.api-key=gemini-secret-for-test",
-        "devcontext.llm.gemini.model=gemini-test-model"
+        "devcontext.llm.gemini.model=gemini-test-model",
+        "devcontext.llm.gemini.timeout=45s"
 })
 @AutoConfigureMockMvc
 class LlmSettingsControllerTests {
@@ -78,6 +79,7 @@ class LlmSettingsControllerTests {
         JsonNode data = objectMapper.readTree(response).path("data");
         assertThat(data.path("provider").asText()).isEqualTo("gemini");
         assertThat(data.path("model").asText()).isEqualTo("gemini-test-model");
+        assertThat(data.path("timeout").asText()).isEqualTo("45s");
         assertThat(data.path("keyConfigured").asBoolean()).isTrue();
         assertThat(data.path("keyStatus").asText()).isEqualTo("configured");
         assertThat(data.path("lastCallStatus").asText()).isEqualTo("never_called");
@@ -87,6 +89,11 @@ class LlmSettingsControllerTests {
                 .map(provider -> provider.path("provider").asText())
                 .toList())
                 .containsExactly("mock", "gemini", "deepseek");
+        JsonNode geminiProvider = StreamSupport.stream(data.path("supportedProviders").spliterator(), false)
+                .filter(provider -> "gemini".equals(provider.path("provider").asText()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(geminiProvider.path("timeout").asText()).isEqualTo("45s");
     }
 
     @Test
@@ -136,6 +143,7 @@ class LlmSettingsControllerTests {
                                 {
                                   "provider": "gemini",
                                   "model": "gemini-from-ui",
+                                  "timeout": "90s",
                                   "geminiApiKey": "gemini-new-secret-from-ui"
                                 }
                                 """))
@@ -148,12 +156,14 @@ class LlmSettingsControllerTests {
         JsonNode data = objectMapper.readTree(response).path("data");
         assertThat(data.path("restartRequired").asBoolean()).isTrue();
         assertThat(data.path("pending").path("provider").asText()).isEqualTo("gemini");
+        assertThat(data.path("pending").path("timeout").asText()).isEqualTo("90s");
         assertThat(data.path("pending").path("keyConfigured").asBoolean()).isTrue();
         assertThat(data.path("pending").path("keyStatus").asText()).isEqualTo("configured");
 
         String config = Files.readString(LOCAL_CONFIG_ROOT.resolve("config/devcontext.local.yml"));
         assertThat(config).contains("provider: gemini");
         assertThat(config).contains("model: gemini-from-ui");
+        assertThat(config).contains("timeout: 90s");
         assertThat(config).contains("api-key: " + newSecret);
     }
 
@@ -167,6 +177,7 @@ class LlmSettingsControllerTests {
                                 {
                                   "provider": "deepseek",
                                   "model": "deepseek-from-ui",
+                                  "deepseekTimeout": "150s",
                                   "deepseekApiKey": "deepseek-new-secret-from-ui"
                                 }
                                 """))
@@ -179,12 +190,30 @@ class LlmSettingsControllerTests {
         JsonNode data = objectMapper.readTree(response).path("data");
         assertThat(data.path("restartRequired").asBoolean()).isTrue();
         assertThat(data.path("pending").path("provider").asText()).isEqualTo("deepseek");
+        assertThat(data.path("pending").path("timeout").asText()).isEqualTo("150s");
         assertThat(data.path("pending").path("keyConfigured").asBoolean()).isTrue();
 
         String config = Files.readString(LOCAL_CONFIG_ROOT.resolve("config/devcontext.local.yml"));
         assertThat(config).contains("provider: deepseek");
         assertThat(config).contains("model: deepseek-from-ui");
+        assertThat(config).contains("timeout: 150s");
         assertThat(config).contains("api-key: " + newSecret);
+    }
+
+    @Test
+    void rejectsInvalidTimeoutWithoutWritingLocalConfig() throws Exception {
+        mockMvc.perform(put("/api/settings/llm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "provider": "gemini",
+                                  "model": "gemini-from-ui",
+                                  "timeout": "0s"
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+
+        assertThat(Files.exists(LOCAL_CONFIG_ROOT.resolve("config/devcontext.local.yml"))).isFalse();
     }
 
     @Test
@@ -216,6 +245,7 @@ class LlmSettingsControllerTests {
         JsonNode data = objectMapper.readTree(response).path("data");
         assertThat(data.path("provider").asText()).isEqualTo("gemini");
         assertThat(data.path("model").asText()).isEqualTo("gemini-test-model");
+        assertThat(data.path("timeout").asText()).isEqualTo("45s");
         assertThat(data.path("success").asBoolean()).isTrue();
         assertThat(data.path("failureCategory").asText()).isEqualTo("none");
         assertThat(data.path("messageSummary").asText()).contains("succeeded");
@@ -243,6 +273,7 @@ class LlmSettingsControllerTests {
         JsonNode data = objectMapper.readTree(response).path("data");
         assertThat(data.path("provider").asText()).isEqualTo("gemini");
         assertThat(data.path("model").asText()).isEqualTo("gemini-test-model");
+        assertThat(data.path("timeout").asText()).isEqualTo("45s");
         assertThat(data.path("success").asBoolean()).isFalse();
         assertThat(data.path("failureCategory").asText()).isEqualTo(LlmErrorTypes.AUTH_FAILED);
         assertThat(data.path("messageSummary").asText()).contains("[masked]");
@@ -276,6 +307,7 @@ class LlmSettingsControllerTests {
 
         assertThat(result.provider()).isEqualTo("mock");
         assertThat(result.model()).isEqualTo("mock-test-model");
+        assertThat(result.timeout()).isNull();
         assertThat(result.success()).isTrue();
         assertThat(result.failureCategory()).isEqualTo("none");
         assertThat(result.keyConfigured()).isFalse();
@@ -313,6 +345,7 @@ class LlmSettingsControllerTests {
 
         assertThat(called.get()).isFalse();
         assertThat(result.provider()).isEqualTo("gemini");
+        assertThat(result.timeout()).isEqualTo("60s");
         assertThat(result.success()).isFalse();
         assertThat(result.failureCategory()).isEqualTo(LlmErrorTypes.PROVIDER_NOT_CONFIGURED);
         assertThat(result.keyConfigured()).isFalse();
@@ -339,6 +372,7 @@ class LlmSettingsControllerTests {
 
         assertThat(status.provider()).isEqualTo("deepseek");
         assertThat(status.model()).isEqualTo("deepseek-v4-pro");
+        assertThat(status.timeout()).isEqualTo("120s");
         assertThat(status.keyConfigured()).isTrue();
         assertThat(status.toString()).doesNotContain("deepseek-secret-for-test");
     }

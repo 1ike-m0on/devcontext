@@ -49,6 +49,7 @@ public class LocalLlmSettingsStore {
                 normalizedProvider,
                 stringValue(providerNode.get("model")),
                 stringValue(providerNode.get("api-key")),
+                stringValue(providerNode.get("timeout")),
                 configPath
         );
     }
@@ -62,6 +63,9 @@ public class LocalLlmSettingsStore {
 
         Map<String, Object> providerNode = mutableChildMap(llm, provider);
         providerNode.put("model", command.model());
+        if (isKeyedProvider(provider) && command.timeout() != null && !command.timeout().isBlank()) {
+            providerNode.put("timeout", command.timeout());
+        }
         if (isKeyedProvider(provider) && command.apiKey() != null && !command.apiKey().isBlank()) {
             providerNode.put("api-key", command.apiKey());
         }
@@ -157,12 +161,13 @@ public class LocalLlmSettingsStore {
     public record SaveCommand(
             String provider,
             String model,
-            String apiKey
+            String apiKey,
+            String timeout
     ) {
 
         @Override
         public String toString() {
-            return "SaveCommand[provider=" + provider + ", model=" + model + ", apiKey=[masked]]";
+            return "SaveCommand[provider=" + provider + ", model=" + model + ", apiKey=[masked], timeout=" + timeout + "]";
         }
     }
 
@@ -170,16 +175,17 @@ public class LocalLlmSettingsStore {
             String provider,
             String model,
             String apiKey,
+            String timeout,
             Path path
     ) {
 
         static PendingConfig empty(Path path) {
-            return new PendingConfig(null, null, null, path);
+            return new PendingConfig(null, null, null, null, path);
         }
 
         @Override
         public String toString() {
-            return "PendingConfig[provider=" + provider + ", model=" + model + ", apiKey=[masked], path=" + path + "]";
+            return "PendingConfig[provider=" + provider + ", model=" + model + ", apiKey=[masked], timeout=" + timeout + ", path=" + path + "]";
         }
     }
 }
