@@ -500,11 +500,19 @@ public class ObservationMapper {
         Map<String, Object> metadata = metadata("topK", record.topK());
         try {
             JsonNode root = objectMapper.readTree(record.resultJson());
-            if (root.isArray()) {
-                metadata.put("resultCount", root.size());
+            JsonNode results = root;
+            if (root.isObject()) {
+                JsonNode queryPlanTrace = root.path("queryPlanTrace");
+                if (queryPlanTrace.isObject()) {
+                    metadata.put("queryPlanTrace", queryPlanTrace(queryPlanTrace));
+                }
+                results = root.path("results");
+            }
+            if (results.isArray()) {
+                metadata.put("resultCount", results.size());
                 List<Map<String, Object>> topResults = new ArrayList<>();
-                for (int i = 0; i < Math.min(root.size(), 5); i++) {
-                    JsonNode result = root.get(i);
+                for (int i = 0; i < Math.min(results.size(), 5); i++) {
+                    JsonNode result = results.get(i);
                     topResults.add(metadata(
                             "filePath", sanitizer.metadataText(result.path("filePath").asText(null)),
                             "evidenceTypes", canonicalEvidenceTypes(result.path("evidenceTypes")),
@@ -517,6 +525,20 @@ public class ObservationMapper {
             metadata.put("resultJsonParseError", sanitizer.error(e.getMessage()));
         }
         return metadata;
+    }
+
+    private Map<String, Object> queryPlanTrace(JsonNode queryPlanTrace) {
+        return metadata(
+                "intent", sanitizer.metadataText(queryPlanTrace.path("intent").asText(null)),
+                "normalizedTerms", stringList(queryPlanTrace.path("normalizedTerms")),
+                "requiredEvidenceTypes", canonicalEvidenceTypes(queryPlanTrace.path("requiredEvidenceTypes")),
+                "preferredEvidenceTypes", canonicalEvidenceTypes(queryPlanTrace.path("preferredEvidenceTypes")),
+                "requiredSourceKinds", stringList(queryPlanTrace.path("requiredSourceKinds")),
+                "preferredSourceKinds", stringList(queryPlanTrace.path("preferredSourceKinds")),
+                "forbiddenSourceKinds", stringList(queryPlanTrace.path("forbiddenSourceKinds")),
+                "fallbackStrategy", sanitizer.metadataText(queryPlanTrace.path("fallbackStrategy").asText(null)),
+                "planningReasons", stringList(queryPlanTrace.path("planningReasons"))
+        );
     }
 
     private Object canonicalEvidenceTypes(JsonNode evidenceTypes) {
@@ -534,6 +556,21 @@ public class ObservationMapper {
                     .orElse(rawValue.trim()));
         }
         return canonicalTypes;
+    }
+
+    private List<String> stringList(JsonNode values) {
+        if (values == null || !values.isArray()) {
+            return List.of();
+        }
+        List<String> strings = new ArrayList<>();
+        for (JsonNode value : values) {
+            String text = value.asText(null);
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            strings.add(sanitizer.metadataText(text));
+        }
+        return strings;
     }
 
     private Map<String, Object> metadata(Object... entries) {

@@ -62,6 +62,7 @@ public class KnowledgeSearchApplicationService {
     private final ProjectProfileRepository projectProfileRepository;
     private final ObjectMapper objectMapper;
     private final ObservationCaptureService observationCaptureService;
+    private final KnowledgeQueryPlanTraceFormatter queryPlanTraceFormatter;
 
     public KnowledgeSearchApplicationService(
             KeywordSearchEngine keywordSearchEngine,
@@ -76,7 +77,8 @@ public class KnowledgeSearchApplicationService {
             ProjectGraphRepository projectGraphRepository,
             ProjectProfileRepository projectProfileRepository,
             ObjectMapper objectMapper,
-            ObservationCaptureService observationCaptureService
+            ObservationCaptureService observationCaptureService,
+            KnowledgeQueryPlanTraceFormatter queryPlanTraceFormatter
     ) {
         this.keywordSearchEngine = keywordSearchEngine;
         this.embeddingClient = embeddingClient;
@@ -91,6 +93,7 @@ public class KnowledgeSearchApplicationService {
         this.projectProfileRepository = projectProfileRepository;
         this.objectMapper = objectMapper;
         this.observationCaptureService = observationCaptureService;
+        this.queryPlanTraceFormatter = queryPlanTraceFormatter;
     }
 
     public KnowledgeSearchResponse search(KnowledgeSearchCommand command) {
@@ -120,7 +123,7 @@ public class KnowledgeSearchApplicationService {
                 query,
                 rewrittenQuery,
                 topK,
-                writeJson(results),
+                writeJson(queryPlan, results),
                 Instant.now()
         ));
         observationCaptureService.captureRetrievalRecord(record);
@@ -195,9 +198,12 @@ public class KnowledgeSearchApplicationService {
         return topK;
     }
 
-    private String writeJson(List<KnowledgeSearchResult> results) {
+    private String writeJson(KnowledgeQueryPlan queryPlan, List<KnowledgeSearchResult> results) {
         try {
-            return objectMapper.writeValueAsString(results);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("queryPlanTrace", queryPlanTraceFormatter.compactTrace(queryPlan));
+            payload.put("results", results);
+            return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize retrieval results", e);
         }
