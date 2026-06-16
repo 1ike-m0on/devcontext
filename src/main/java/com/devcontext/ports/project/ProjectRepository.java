@@ -12,6 +12,8 @@ public interface ProjectRepository {
 
     Optional<Project> findById(Long id);
 
+    Optional<Project> findByRootPath(String rootPath);
+
     List<Project> findAll();
 
     void deleteById(Long id);

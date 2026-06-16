@@ -8,6 +8,7 @@ import com.devcontext.domain.knowledge.KnowledgeChunkView;
 import com.devcontext.domain.knowledge.KnowledgeDocument;
 import com.devcontext.domain.knowledge.KnowledgeEvidenceType;
 import com.devcontext.domain.knowledge.KnowledgeFusionScore;
+import com.devcontext.domain.knowledge.KnowledgeProjectContextSignal;
 import com.devcontext.domain.knowledge.KnowledgeQueryPlan;
 import com.devcontext.domain.knowledge.KnowledgeSource;
 import java.time.Instant;
@@ -108,6 +109,44 @@ class KnowledgeFusionScoringServiceTests {
         assertThat(generatedDoc.reasons()).contains("preferred_evidence:GENERATED_DOC", "source_reliability:derived");
         assertThat(manualDoc.reasons()).doesNotContain("generic_doc_penalty");
         assertThat(generatedDoc.reasons()).doesNotContain("generic_doc_penalty");
+    }
+
+    @Test
+    void projectGraphAndProfileContextCanLiftStructurallyRelevantChunk() {
+        KnowledgeQueryPlan plan = plan(
+                List.of(),
+                List.of(KnowledgeEvidenceType.GENERATED_DOC)
+        );
+
+        KnowledgeFusionScore contextual = scoringService.score(
+                0.35,
+                0.35,
+                plan,
+                List.of(KnowledgeEvidenceType.GENERATED_DOC),
+                view("docs/payment-context.md", "Payment Context", "Payment Saga", "Payment rollback flow"),
+                new KnowledgeProjectContextSignal(
+                        42L,
+                        List.of("source_path:docs/payment-context.md"),
+                        List.of("source_path:docs/payment-context.md")
+                )
+        );
+        KnowledgeFusionScore plain = scoringService.score(
+                0.82,
+                0.82,
+                plan,
+                List.of(KnowledgeEvidenceType.GENERATED_DOC),
+                view("docs/payment-overview.md", "Payment Overview", "Payment", "Payment rollback flow"),
+                KnowledgeProjectContextSignal.none()
+        );
+
+        assertThat(contextual.fusedScore()).isGreaterThan(plain.fusedScore());
+        assertThat(contextual.reasons()).contains(
+                "project_graph_context:source_path:docs/payment-context.md",
+                "project_profile_context:source_path:docs/payment-context.md"
+        );
+        assertThat(plain.reasons())
+                .doesNotContain("project_graph_context:source_path:docs/payment-context.md")
+                .doesNotContain("project_profile_context:source_path:docs/payment-context.md");
     }
 
     private KnowledgeQueryPlan plan(
