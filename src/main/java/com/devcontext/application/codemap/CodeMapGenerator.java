@@ -1,10 +1,15 @@
 package com.devcontext.application.codemap;
 
 import com.devcontext.domain.codemap.CodeEntrypoint;
+import com.devcontext.domain.codemap.CodeMapConfigKey;
 import com.devcontext.domain.codemap.CodeDependency;
 import com.devcontext.domain.codemap.CodeDomainTerm;
 import com.devcontext.domain.codemap.CodeEndpoint;
 import com.devcontext.domain.codemap.CodeMap;
+import com.devcontext.domain.codemap.CodeMapDependencyEdge;
+import com.devcontext.domain.codemap.CodeMapFileEntry;
+import com.devcontext.domain.codemap.CodeMapRoutingHint;
+import com.devcontext.domain.codemap.CodeMapTestRelation;
 import com.devcontext.domain.codemap.CodeModule;
 import com.devcontext.domain.codemap.CodeRuntimeComponent;
 import com.devcontext.domain.codemap.CodeSymbol;
@@ -28,7 +33,13 @@ import org.springframework.stereotype.Component;
 public class CodeMapGenerator {
 
     public CodeMap generate(Project project, ProjectScan scan) {
+        List<CodeModule> modules = modules(scan);
+        List<CodeEntrypoint> entrypoints = entrypoints(scan);
+        List<CodeSymbol> symbols = symbols(scan);
+        List<CodeEndpoint> endpoints = endpoints(scan);
+        List<CodeDependency> dependencies = dependencies(scan);
         return new CodeMap(
+                CodeMap.CURRENT_SCHEMA_VERSION,
                 Instant.now().toString(),
                 project.name(),
                 project.rootPath(),
@@ -37,11 +48,11 @@ public class CodeMapGenerator {
                 scan.buildTool(),
                 scan.gitBranch(),
                 scan.gitCommit(),
-                modules(scan),
-                entrypoints(scan),
-                symbols(scan),
-                endpoints(scan),
-                dependencies(scan),
+                modules,
+                entrypoints,
+                symbols,
+                endpoints,
+                dependencies,
                 technologies(scan),
                 runtimeComponents(scan),
                 domainTerms(scan),
@@ -49,7 +60,14 @@ public class CodeMapGenerator {
                 scan.configFiles(),
                 scan.testRoots(),
                 scan.docs(),
-                scan.todos()
+                scan.todos(),
+                files(scan),
+                List.<CodeMapConfigKey>of(),
+                List.<CodeMapRoutingHint>of(),
+                routingHints(symbols, "mapper"),
+                routingHints(symbols, "entity"),
+                List.<CodeMapTestRelation>of(),
+                dependencyEdges(dependencies)
         );
     }
 
@@ -127,6 +145,71 @@ public class CodeMapGenerator {
                                 businessModule(file)
                         )))
                 .sorted(Comparator.comparing(CodeDependency::fromFile).thenComparing(CodeDependency::toType))
+                .limit(1_000)
+                .toList();
+    }
+
+    private List<CodeMapFileEntry> files(ProjectScan scan) {
+        Map<String, CodeMapFileEntry> filesByPath = new LinkedHashMap<>();
+        for (ScannedJavaFile file : scan.javaFiles()) {
+            filesByPath.put(file.path(), new CodeMapFileEntry(
+                    file.path(),
+                    "source",
+                    "Java",
+                    businessModule(file),
+                    List.of(symbolRole(file))
+            ));
+        }
+        for (String configFile : scan.configFiles()) {
+            filesByPath.putIfAbsent(configFile, new CodeMapFileEntry(
+                    configFile,
+                    "configuration",
+                    languageForPath(configFile),
+                    moduleFromPath(configFile),
+                    List.of("configuration")
+            ));
+        }
+        for (String doc : scan.docs()) {
+            filesByPath.putIfAbsent(doc, new CodeMapFileEntry(
+                    doc,
+                    "documentation",
+                    languageForPath(doc),
+                    moduleFromPath(doc),
+                    List.of("documentation")
+            ));
+        }
+        return filesByPath.values().stream()
+                .sorted(Comparator.comparing(CodeMapFileEntry::path))
+                .limit(1_000)
+                .toList();
+    }
+
+    private List<CodeMapRoutingHint> routingHints(List<CodeSymbol> symbols, String role) {
+        return symbols.stream()
+                .filter(symbol -> role.equals(symbol.role()))
+                .map(symbol -> new CodeMapRoutingHint(
+                        role,
+                        symbol.name(),
+                        symbol.file(),
+                        symbol.name()
+                ))
+                .sorted(Comparator.comparing(CodeMapRoutingHint::file)
+                        .thenComparing(CodeMapRoutingHint::name))
+                .limit(300)
+                .toList();
+    }
+
+    private List<CodeMapDependencyEdge> dependencyEdges(List<CodeDependency> dependencies) {
+        return dependencies.stream()
+                .map(dependency -> new CodeMapDependencyEdge(
+                        dependency.fromFile(),
+                        dependency.fromClass(),
+                        null,
+                        dependency.toType(),
+                        "type_dependency"
+                ))
+                .sorted(Comparator.comparing(CodeMapDependencyEdge::fromFile)
+                        .thenComparing(CodeMapDependencyEdge::toSymbol))
                 .limit(1_000)
                 .toList();
     }
@@ -338,6 +421,40 @@ public class CodeMapGenerator {
             return "Domain model";
         }
         return "TODO: Confirm module responsibility.";
+    }
+
+    private String languageForPath(String path) {
+        String lower = path.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".java")) {
+            return "Java";
+        }
+        if (lower.endsWith(".yml") || lower.endsWith(".yaml")) {
+            return "YAML";
+        }
+        if (lower.endsWith(".properties")) {
+            return "Properties";
+        }
+        if (lower.endsWith(".xml") || lower.equals("pom.xml")) {
+            return "XML";
+        }
+        if (lower.endsWith(".json")) {
+            return "JSON";
+        }
+        if (lower.endsWith(".md")) {
+            return "Markdown";
+        }
+        return "";
+    }
+
+    private String moduleFromPath(String path) {
+        String normalized = path.replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        if (slash <= 0) {
+            return "root";
+        }
+        String parent = normalized.substring(0, slash);
+        int parentSlash = parent.lastIndexOf('/');
+        return parentSlash < 0 ? parent : parent.substring(parentSlash + 1);
     }
 
     private List<String> domainTermsForFile(ScannedJavaFile file) {
