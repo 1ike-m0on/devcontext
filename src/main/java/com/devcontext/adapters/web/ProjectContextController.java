@@ -3,10 +3,12 @@ package com.devcontext.adapters.web;
 import com.devcontext.application.context.ProjectContextAssetApplicationService;
 import com.devcontext.application.context.QuestionContextResolveCommand;
 import com.devcontext.application.context.QuestionContextResolver;
+import com.devcontext.application.evidence.ProjectEvidenceCatalogApplicationService;
 import com.devcontext.common.api.ApiResponse;
 import com.devcontext.domain.context.ContextGenerationResult;
 import com.devcontext.domain.context.ProjectContextStatus;
 import com.devcontext.domain.context.QuestionContextResolveResult;
+import com.devcontext.domain.evidence.ProjectEvidenceCoverageSummary;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,13 +22,16 @@ public class ProjectContextController {
 
     private final ProjectContextAssetApplicationService contextAssetService;
     private final QuestionContextResolver questionContextResolver;
+    private final ProjectEvidenceCatalogApplicationService evidenceCatalogService;
 
     public ProjectContextController(
             ProjectContextAssetApplicationService contextAssetService,
-            QuestionContextResolver questionContextResolver
+            QuestionContextResolver questionContextResolver,
+            ProjectEvidenceCatalogApplicationService evidenceCatalogService
     ) {
         this.contextAssetService = contextAssetService;
         this.questionContextResolver = questionContextResolver;
+        this.evidenceCatalogService = evidenceCatalogService;
     }
 
     @PostMapping("/generate")
@@ -42,6 +47,11 @@ public class ProjectContextController {
     @GetMapping
     public ApiResponse<ProjectContextStatus> getStatus(@PathVariable Long projectId) {
         return ApiResponse.ok(contextAssetService.getStatus(projectId));
+    }
+
+    @GetMapping("/evidence-coverage")
+    public ApiResponse<ProjectEvidenceCoverageSummary> getEvidenceCoverage(@PathVariable Long projectId) {
+        return ApiResponse.ok(evidenceCatalogService.buildSummary(projectId));
     }
 
     @PostMapping("/resolve")
