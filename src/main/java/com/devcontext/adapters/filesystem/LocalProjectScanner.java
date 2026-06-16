@@ -76,6 +76,9 @@ public class LocalProjectScanner implements ProjectScanner {
                 existingPaths(root, "src/main/resources", "resources"),
                 existingPaths(root, "src/test/java", "src/test/kotlin", "test", "tests"),
                 findConfigFiles(root),
+                findSqlFiles(root),
+                findMapperFiles(root),
+                findTestFiles(root),
                 docs,
                 findJavaFiles(root),
                 commands,
@@ -140,6 +143,51 @@ public class LocalProjectScanner implements ProjectScanner {
                             || path.endsWith(".md"))
                     .sorted()
                     .limit(100)
+                    .toList();
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    private List<String> findSqlFiles(Path root) {
+        try (Stream<Path> stream = Files.walk(root, 8)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> !isIgnored(root, path))
+                    .map(path -> relative(root, path))
+                    .filter(path -> path.toLowerCase().endsWith(".sql"))
+                    .sorted()
+                    .limit(200)
+                    .toList();
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    private List<String> findMapperFiles(Path root) {
+        try (Stream<Path> stream = Files.walk(root, 8)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> !isIgnored(root, path))
+                    .map(path -> relative(root, path))
+                    .filter(this::isMapperFile)
+                    .sorted()
+                    .limit(200)
+                    .toList();
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    private List<String> findTestFiles(Path root) {
+        try (Stream<Path> stream = Files.walk(root, 30)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> !isIgnored(root, path))
+                    .map(path -> relative(root, path))
+                    .filter(this::isTestFile)
+                    .sorted()
+                    .limit(300)
                     .toList();
         } catch (IOException e) {
             return List.of();
@@ -531,10 +579,37 @@ public class LocalProjectScanner implements ProjectScanner {
                 || name.equals("go.mod")
                 || name.equals("Cargo.toml")
                 || name.equals("Dockerfile")
+                || name.equals(".env.example")
+                || name.equals(".env.sample")
+                || name.equals("env.example")
+                || name.equals("compose.yaml")
+                || name.equals("compose.yml")
+                || name.equals("docker-compose.yml")
+                || name.equals("docker-compose.yaml")
                 || name.startsWith("application.")
                 || name.endsWith(".yml")
                 || name.endsWith(".yaml")
                 || name.endsWith(".properties");
+    }
+
+    private boolean isMapperFile(String path) {
+        String normalized = path.replace('\\', '/').toLowerCase();
+        String name = Path.of(path).getFileName().toString().toLowerCase();
+        return normalized.endsWith(".xml")
+                && (name.endsWith("mapper.xml") || normalized.contains("/mapper/") || normalized.contains("/mappers/"));
+    }
+
+    private boolean isTestFile(String path) {
+        String normalized = path.replace('\\', '/').toLowerCase();
+        String name = Path.of(path).getFileName().toString();
+        return (normalized.startsWith("src/test/")
+                || normalized.contains("/src/test/")
+                || normalized.startsWith("test/")
+                || normalized.startsWith("tests/"))
+                && (name.endsWith("Test.java")
+                || name.endsWith("Tests.java")
+                || name.endsWith("IT.java")
+                || name.endsWith("Spec.java"));
     }
 
     private boolean isIgnored(Path root, Path path) {

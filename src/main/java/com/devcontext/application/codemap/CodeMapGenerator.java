@@ -17,6 +17,9 @@ import com.devcontext.domain.codemap.CodeTechnologySignal;
 import com.devcontext.domain.project.Project;
 import com.devcontext.domain.project.ProjectScan;
 import com.devcontext.domain.project.ScannedJavaFile;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,12 +28,49 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 @Component
 public class CodeMapGenerator {
+
+    private static final Pattern YAML_KEY_PATTERN = Pattern.compile("^([A-Za-z0-9_.-]+)\\s*:\\s*(.*)$");
+    private static final Pattern PROPERTY_KEY_PATTERN = Pattern.compile("^\\s*([A-Za-z0-9_.-]+)\\s*[:=].*$");
+    private static final Pattern ENV_KEY_PATTERN = Pattern.compile("^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=.*$");
+    private static final String SQL_IDENTIFIER = "[`\"\\[]?[A-Za-z][\\w$]*[`\"\\]]?(?:\\.[`\"\\[]?[A-Za-z][\\w$]*[`\"\\]]?)?";
+    private static final Pattern SQL_CREATE_TABLE_PATTERN = Pattern.compile(
+            "\\bcreate\\s+table\\s+(?:if\\s+not\\s+exists\\s+)?(" + SQL_IDENTIFIER + ")",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern SQL_CREATE_INDEX_PATTERN = Pattern.compile(
+            "\\bcreate\\s+(?:unique\\s+)?index\\s+(?:if\\s+not\\s+exists\\s+)?(" + SQL_IDENTIFIER + ")",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern SQL_TABLE_REFERENCE_PATTERN = Pattern.compile(
+            "\\b(from|join|into|update|table)\\s+(" + SQL_IDENTIFIER + ")",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern MAPPER_NAMESPACE_PATTERN = Pattern.compile(
+            "<mapper\\b[^>]*\\bnamespace\\s*=\\s*\"([^\"]+)\"",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern MAPPER_STATEMENT_PATTERN = Pattern.compile(
+            "<(select|insert|update|delete)\\b[^>]*\\bid\\s*=\\s*\"([^\"]+)\"",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern ENTITY_TABLE_PATTERN = Pattern.compile(
+            "@(?:Table|TableName)\\s*\\((?:[^)]*?name\\s*=\\s*)?\"([^\"]+)\"",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern SQL_ANNOTATION_PATTERN = Pattern.compile(
+            "@(?:Select|Insert|Update|Delete|Query)\\s*\\(([^)]*)\\)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+    );
+    private static final Pattern QUOTED_TEXT_PATTERN = Pattern.compile("\"([^\"]+)\"");
 
     public CodeMap generate(Project project, ProjectScan scan) {
         List<CodeModule> modules = modules(scan);
@@ -38,6 +78,15 @@ public class CodeMapGenerator {
         List<CodeSymbol> symbols = symbols(scan);
         List<CodeEndpoint> endpoints = endpoints(scan);
         List<CodeDependency> dependencies = dependencies(scan);
+        List<CodeMapRoutingHint> mapperHints = mergeHints(
+                routingHints(symbols, "mapper"),
+                mapperFileHints(scan),
+                mapperAnnotationHints(scan)
+        );
+        List<CodeMapRoutingHint> entityHints = mergeHints(
+                routingHints(symbols, "entity"),
+                entityTableHints(scan)
+        );
         return new CodeMap(
                 CodeMap.CURRENT_SCHEMA_VERSION,
                 Instant.now().toString(),
@@ -62,11 +111,11 @@ public class CodeMapGenerator {
                 scan.docs(),
                 scan.todos(),
                 files(scan),
-                List.<CodeMapConfigKey>of(),
-                List.<CodeMapRoutingHint>of(),
-                routingHints(symbols, "mapper"),
-                routingHints(symbols, "entity"),
-                List.<CodeMapTestRelation>of(),
+                configKeys(scan),
+                sqlHints(scan),
+                mapperHints,
+                entityHints,
+                testRelations(scan),
                 dependencyEdges(dependencies)
         );
     }
@@ -160,6 +209,33 @@ public class CodeMapGenerator {
                     fileRoles(file)
             ));
         }
+        for (String sqlFile : scan.sqlFiles()) {
+            filesByPath.put(sqlFile, new CodeMapFileEntry(
+                    sqlFile,
+                    "database_schema",
+                    languageForPath(sqlFile),
+                    moduleFromPath(sqlFile),
+                    List.of("sql", "database-schema")
+            ));
+        }
+        for (String mapperFile : scan.mapperFiles()) {
+            filesByPath.put(mapperFile, new CodeMapFileEntry(
+                    mapperFile,
+                    "mapper",
+                    languageForPath(mapperFile),
+                    moduleFromPath(mapperFile),
+                    List.of("mapper", "data-access")
+            ));
+        }
+        for (String testFile : scan.testFiles()) {
+            filesByPath.put(testFile, new CodeMapFileEntry(
+                    testFile,
+                    "test",
+                    languageForPath(testFile),
+                    moduleFromPath(testFile),
+                    List.of("test")
+            ));
+        }
         for (String configFile : scan.configFiles()) {
             filesByPath.putIfAbsent(configFile, new CodeMapFileEntry(
                     configFile,
@@ -184,6 +260,44 @@ public class CodeMapGenerator {
                 .toList();
     }
 
+    private List<CodeMapConfigKey> configKeys(ProjectScan scan) {
+        Map<String, CodeMapConfigKey> keysByFileAndName = new LinkedHashMap<>();
+        for (String configFile : scan.configFiles()) {
+            Optional<String> content = readProjectFile(scan, configFile);
+            if (content.isEmpty()) {
+                continue;
+            }
+            for (String key : extractConfigKeys(configFile, content.get())) {
+                keysByFileAndName.putIfAbsent(
+                        configFile + "|" + key,
+                        new CodeMapConfigKey(key, configFile, moduleFromPath(configFile))
+                );
+            }
+        }
+        return keysByFileAndName.values().stream()
+                .sorted(Comparator.comparing(CodeMapConfigKey::file)
+                        .thenComparing(CodeMapConfigKey::key))
+                .limit(500)
+                .toList();
+    }
+
+    private List<CodeMapRoutingHint> sqlHints(ProjectScan scan) {
+        List<CodeMapRoutingHint> hints = new ArrayList<>();
+        for (String sqlFile : scan.sqlFiles()) {
+            readProjectFile(scan, sqlFile)
+                    .ifPresent(content -> hints.addAll(sqlHintsFromSqlContent(sqlFile, content, moduleFromPath(sqlFile))));
+        }
+        for (String mapperFile : scan.mapperFiles()) {
+            readProjectFile(scan, mapperFile)
+                    .ifPresent(content -> hints.addAll(sqlTableReferenceHints(mapperFile, content, moduleFromPath(mapperFile))));
+        }
+        for (ScannedJavaFile file : scan.javaFiles()) {
+            readProjectFile(scan, file.path())
+                    .ifPresent(content -> hints.addAll(sqlAnnotationTableHints(file, content)));
+        }
+        return mergeHints(hints);
+    }
+
     private List<CodeMapRoutingHint> routingHints(List<CodeSymbol> symbols, String role) {
         return symbols.stream()
                 .filter(symbol -> role.equals(symbol.role()))
@@ -195,6 +309,94 @@ public class CodeMapGenerator {
                 ))
                 .sorted(Comparator.comparing(CodeMapRoutingHint::file)
                         .thenComparing(CodeMapRoutingHint::name))
+                .limit(300)
+                .toList();
+    }
+
+    private List<CodeMapRoutingHint> mapperFileHints(ProjectScan scan) {
+        List<CodeMapRoutingHint> hints = new ArrayList<>();
+        for (String mapperFile : scan.mapperFiles()) {
+            Optional<String> content = readProjectFile(scan, mapperFile);
+            if (content.isEmpty()) {
+                continue;
+            }
+            String namespace = extractFirst(MAPPER_NAMESPACE_PATTERN, content.get(), 1).orElse("");
+            String owner = namespace.isBlank() ? moduleFromPath(mapperFile) : namespace;
+            String mapperName = namespace.isBlank() ? fileNameWithoutExtension(mapperFile) : simpleName(namespace);
+            if (!mapperName.isBlank()) {
+                hints.add(new CodeMapRoutingHint("mapper_xml", mapperName, mapperFile, owner));
+            }
+
+            Matcher statementMatcher = MAPPER_STATEMENT_PATTERN.matcher(content.get());
+            while (statementMatcher.find() && hints.size() < 200) {
+                hints.add(new CodeMapRoutingHint("mapper_statement", statementMatcher.group(2), mapperFile, mapperName));
+            }
+        }
+        return mergeHints(hints);
+    }
+
+    private List<CodeMapRoutingHint> mapperAnnotationHints(ProjectScan scan) {
+        List<CodeMapRoutingHint> hints = new ArrayList<>();
+        for (ScannedJavaFile file : scan.javaFiles()) {
+            String role = symbolRole(file);
+            if (!role.equals("mapper") && !role.equals("repository")) {
+                continue;
+            }
+            readProjectFile(scan, file.path())
+                    .filter(content -> SQL_ANNOTATION_PATTERN.matcher(content).find())
+                    .ifPresent(ignored -> hints.add(new CodeMapRoutingHint(
+                            "mapper_annotation",
+                            file.className(),
+                            file.path(),
+                            role
+                    )));
+        }
+        return mergeHints(hints);
+    }
+
+    private List<CodeMapRoutingHint> entityTableHints(ProjectScan scan) {
+        List<CodeMapRoutingHint> hints = new ArrayList<>();
+        for (ScannedJavaFile file : scan.javaFiles()) {
+            if (!symbolRole(file).equals("entity")) {
+                continue;
+            }
+            Optional<String> content = readProjectFile(scan, file.path());
+            if (content.isEmpty()) {
+                continue;
+            }
+            Matcher tableMatcher = ENTITY_TABLE_PATTERN.matcher(content.get());
+            while (tableMatcher.find() && hints.size() < 200) {
+                String tableName = cleanSqlIdentifier(tableMatcher.group(1));
+                if (!tableName.isBlank()) {
+                    hints.add(new CodeMapRoutingHint("entity_table", tableName, file.path(), file.className()));
+                }
+            }
+        }
+        return mergeHints(hints);
+    }
+
+    private List<CodeMapTestRelation> testRelations(ProjectScan scan) {
+        Map<String, String> productionFilesByClass = scan.javaFiles().stream()
+                .collect(Collectors.toMap(
+                        ScannedJavaFile::className,
+                        ScannedJavaFile::path,
+                        (first, ignored) -> first,
+                        LinkedHashMap::new
+                ));
+        List<CodeMapTestRelation> relations = new ArrayList<>();
+        for (String testFile : scan.testFiles()) {
+            String targetClass = testTargetClass(fileNameWithoutExtension(testFile));
+            if (targetClass.isBlank()) {
+                continue;
+            }
+            String targetFile = productionFilesByClass.get(targetClass);
+            if (targetFile != null) {
+                relations.add(new CodeMapTestRelation(testFile, targetFile, "name_convention"));
+            }
+        }
+        return relations.stream()
+                .sorted(Comparator.comparing(CodeMapTestRelation::testFile)
+                        .thenComparing(CodeMapTestRelation::targetFile))
                 .limit(300)
                 .toList();
     }
@@ -494,6 +696,251 @@ public class CodeMapGenerator {
         return parentSlash < 0 ? parent : parent.substring(parentSlash + 1);
     }
 
+    private List<String> extractConfigKeys(String path, String content) {
+        String lower = path.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".properties")) {
+            return extractPropertyKeys(content);
+        }
+        if (lower.endsWith(".env.example") || lower.endsWith(".env.sample") || lower.endsWith("env.example")) {
+            return extractEnvKeys(content);
+        }
+        if (lower.endsWith(".yml") || lower.endsWith(".yaml")) {
+            return extractYamlKeys(content);
+        }
+        return List.of();
+    }
+
+    private List<String> extractPropertyKeys(String content) {
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        for (String line : content.lines().toList()) {
+            String trimmed = line.trim();
+            if (trimmed.isBlank() || trimmed.startsWith("#") || trimmed.startsWith("!")) {
+                continue;
+            }
+            Matcher matcher = PROPERTY_KEY_PATTERN.matcher(line);
+            if (matcher.find()) {
+                keys.add(matcher.group(1));
+            }
+        }
+        return keys.stream().limit(200).toList();
+    }
+
+    private List<String> extractEnvKeys(String content) {
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        for (String line : content.lines().toList()) {
+            String trimmed = line.trim();
+            if (trimmed.isBlank() || trimmed.startsWith("#")) {
+                continue;
+            }
+            Matcher matcher = ENV_KEY_PATTERN.matcher(line);
+            if (matcher.find()) {
+                keys.add(matcher.group(1));
+            }
+        }
+        return keys.stream().limit(200).toList();
+    }
+
+    private List<String> extractYamlKeys(String content) {
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        List<YamlSegment> stack = new ArrayList<>();
+        for (String rawLine : content.lines().toList()) {
+            String trimmed = rawLine.trim();
+            if (trimmed.isBlank() || trimmed.startsWith("#") || trimmed.equals("---")) {
+                continue;
+            }
+            if (trimmed.startsWith("- ")) {
+                addYamlListConfigKey(keys, stack, trimmed.substring(2).trim());
+                continue;
+            }
+            Matcher matcher = YAML_KEY_PATTERN.matcher(trimmed);
+            if (!matcher.find()) {
+                continue;
+            }
+            int indent = leadingSpaces(rawLine);
+            while (!stack.isEmpty() && stack.getLast().indent() >= indent) {
+                stack.removeLast();
+            }
+            String key = cleanConfigKey(matcher.group(1));
+            if (key.isBlank()) {
+                continue;
+            }
+            String fullKey = joinYamlKey(stack, key);
+            String value = matcher.group(2).trim();
+            if (!value.isBlank() && !value.equals("|") && !value.equals(">")) {
+                keys.add(fullKey);
+            }
+            if (value.isBlank() || value.equals("|") || value.equals(">")) {
+                stack.add(new YamlSegment(indent, key));
+            }
+        }
+        return keys.stream().limit(300).toList();
+    }
+
+    private void addYamlListConfigKey(Set<String> keys, List<YamlSegment> stack, String item) {
+        Matcher matcher = ENV_KEY_PATTERN.matcher(item);
+        if (matcher.find()) {
+            keys.add(joinYamlKey(stack, matcher.group(1)));
+        }
+    }
+
+    private List<CodeMapRoutingHint> sqlHintsFromSqlContent(String file, String content, String owner) {
+        List<CodeMapRoutingHint> hints = new ArrayList<>();
+        addSqlMatches(hints, SQL_CREATE_TABLE_PATTERN, "sql_table", file, owner, content);
+        addSqlMatches(hints, SQL_CREATE_INDEX_PATTERN, "sql_index", file, owner, content);
+        return mergeHints(hints);
+    }
+
+    private List<CodeMapRoutingHint> sqlTableReferenceHints(String file, String content, String owner) {
+        List<CodeMapRoutingHint> hints = new ArrayList<>();
+        Matcher matcher = SQL_TABLE_REFERENCE_PATTERN.matcher(content);
+        while (matcher.find() && hints.size() < 200) {
+            String tableName = cleanSqlIdentifier(matcher.group(2));
+            if (isUsefulSqlName(tableName)) {
+                hints.add(new CodeMapRoutingHint("sql_table", tableName, file, owner));
+            }
+        }
+        return mergeHints(hints);
+    }
+
+    private List<CodeMapRoutingHint> sqlAnnotationTableHints(ScannedJavaFile file, String content) {
+        List<CodeMapRoutingHint> hints = new ArrayList<>();
+        Matcher annotationMatcher = SQL_ANNOTATION_PATTERN.matcher(content);
+        while (annotationMatcher.find() && hints.size() < 200) {
+            String sqlText = quotedText(annotationMatcher.group(1));
+            hints.addAll(sqlTableReferenceHints(file.path(), sqlText, file.className()));
+        }
+        return mergeHints(hints);
+    }
+
+    private void addSqlMatches(
+            List<CodeMapRoutingHint> hints,
+            Pattern pattern,
+            String kind,
+            String file,
+            String owner,
+            String content
+    ) {
+        Matcher matcher = pattern.matcher(content);
+        while (matcher.find() && hints.size() < 200) {
+            String name = cleanSqlIdentifier(matcher.group(1));
+            if (isUsefulSqlName(name)) {
+                hints.add(new CodeMapRoutingHint(kind, name, file, owner));
+            }
+        }
+    }
+
+    private String quotedText(String value) {
+        List<String> parts = new ArrayList<>();
+        Matcher matcher = QUOTED_TEXT_PATTERN.matcher(value);
+        while (matcher.find() && parts.size() < 20) {
+            parts.add(matcher.group(1));
+        }
+        return String.join(" ", parts);
+    }
+
+    private Optional<String> readProjectFile(ProjectScan scan, String relativePath) {
+        try {
+            Path root = Path.of(scan.rootPath()).toAbsolutePath().normalize();
+            Path file = root.resolve(relativePath).toAbsolutePath().normalize();
+            if (!file.startsWith(root) || !Files.exists(file) || !Files.isRegularFile(file)) {
+                return Optional.empty();
+            }
+            if (Files.size(file) > 500_000) {
+                return Optional.empty();
+            }
+            return Optional.of(Files.readString(file));
+        } catch (IOException | IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    @SafeVarargs
+    private final List<CodeMapRoutingHint> mergeHints(List<CodeMapRoutingHint>... hintGroups) {
+        Map<String, CodeMapRoutingHint> hintsByKey = new LinkedHashMap<>();
+        for (List<CodeMapRoutingHint> hintGroup : hintGroups) {
+            for (CodeMapRoutingHint hint : hintGroup) {
+                if (hint == null || hint.name() == null || hint.name().isBlank()) {
+                    continue;
+                }
+                hintsByKey.putIfAbsent(
+                        hint.kind() + "|" + hint.name() + "|" + hint.file() + "|" + hint.owner(),
+                        hint
+                );
+            }
+        }
+        return hintsByKey.values().stream()
+                .sorted(Comparator.comparing(CodeMapRoutingHint::file)
+                        .thenComparing(CodeMapRoutingHint::kind)
+                        .thenComparing(CodeMapRoutingHint::name))
+                .limit(500)
+                .toList();
+    }
+
+    private Optional<String> extractFirst(Pattern pattern, String content, int group) {
+        Matcher matcher = pattern.matcher(content);
+        if (matcher.find()) {
+            return Optional.ofNullable(matcher.group(group));
+        }
+        return Optional.empty();
+    }
+
+    private String testTargetClass(String testClassName) {
+        for (String suffix : List.of("Tests", "Test", "IT", "Spec")) {
+            if (testClassName.endsWith(suffix) && testClassName.length() > suffix.length()) {
+                return testClassName.substring(0, testClassName.length() - suffix.length());
+            }
+        }
+        return "";
+    }
+
+    private String fileNameWithoutExtension(String path) {
+        String name = Path.of(path).getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? name : name.substring(0, dot);
+    }
+
+    private String simpleName(String value) {
+        int dot = value.lastIndexOf('.');
+        return dot < 0 ? value : value.substring(dot + 1);
+    }
+
+    private String cleanConfigKey(String key) {
+        return key.replaceAll("^['\"]|['\"]$", "").trim();
+    }
+
+    private int leadingSpaces(String value) {
+        int count = 0;
+        while (count < value.length() && value.charAt(count) == ' ') {
+            count++;
+        }
+        return count;
+    }
+
+    private String joinYamlKey(List<YamlSegment> stack, String key) {
+        List<String> parts = new ArrayList<>();
+        for (YamlSegment segment : stack) {
+            parts.add(segment.name());
+        }
+        parts.add(key);
+        return String.join(".", parts);
+    }
+
+    private String cleanSqlIdentifier(String value) {
+        String cleaned = value == null ? "" : value.trim();
+        cleaned = cleaned.replaceAll("[`\"\\[\\]]", "");
+        int dot = cleaned.lastIndexOf('.');
+        if (dot >= 0) {
+            cleaned = cleaned.substring(dot + 1);
+        }
+        return cleaned;
+    }
+
+    private boolean isUsefulSqlName(String value) {
+        return value != null
+                && !value.isBlank()
+                && !Set.of("select", "where", "values", "set").contains(value.toLowerCase(Locale.ROOT));
+    }
+
     private List<String> domainTermsForFile(ScannedJavaFile file) {
         List<String> values = new ArrayList<>();
         values.add(file.className());
@@ -558,4 +1005,7 @@ public class CodeMapGenerator {
             "get", "post", "put", "delete", "patch", "api", "class", "method", "handler",
             "list", "page", "query", "create", "update", "find", "execute", "path", "string"
     );
+
+    private record YamlSegment(int indent, String name) {
+    }
 }
