@@ -14,6 +14,25 @@ public record EvidenceEvaluation(
         List<KnowledgeEvidenceType> missingPreferredEvidenceTypes,
         List<KnowledgeEvidenceType> observedEvidenceTypes,
         List<EvidenceCitationAssessment> citationAssessments,
-        List<String> reasons
+        List<String> reasons,
+        String answerGuardDecision,
+        List<KnowledgeEvidenceType> weakEvidenceTypes,
+        List<String> weakEvidenceReasons
 ) {
+    public EvidenceEvaluation {
+        requiredEvidenceTypes = requiredEvidenceTypes == null ? List.of() : List.copyOf(requiredEvidenceTypes);
+        matchedRequiredEvidenceTypes = matchedRequiredEvidenceTypes == null ? List.of() : List.copyOf(matchedRequiredEvidenceTypes);
+        missingRequiredEvidenceTypes = missingRequiredEvidenceTypes == null ? List.of() : List.copyOf(missingRequiredEvidenceTypes);
+        preferredEvidenceTypes = preferredEvidenceTypes == null ? List.of() : List.copyOf(preferredEvidenceTypes);
+        matchedPreferredEvidenceTypes = matchedPreferredEvidenceTypes == null ? List.of() : List.copyOf(matchedPreferredEvidenceTypes);
+        missingPreferredEvidenceTypes = missingPreferredEvidenceTypes == null ? List.of() : List.copyOf(missingPreferredEvidenceTypes);
+        observedEvidenceTypes = observedEvidenceTypes == null ? List.of() : List.copyOf(observedEvidenceTypes);
+        citationAssessments = citationAssessments == null ? List.of() : List.copyOf(citationAssessments);
+        reasons = reasons == null ? List.of() : List.copyOf(reasons);
+        answerGuardDecision = answerGuardDecision == null || answerGuardDecision.isBlank()
+                ? "insufficient_evidence"
+                : answerGuardDecision;
+        weakEvidenceTypes = weakEvidenceTypes == null ? List.of() : List.copyOf(weakEvidenceTypes);
+        weakEvidenceReasons = weakEvidenceReasons == null ? List.of() : List.copyOf(weakEvidenceReasons);
+    }
 }

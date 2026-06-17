@@ -66,6 +66,7 @@ class RagEvidenceEvaluationTests {
 
         assertThat(askJson.path("answer").asText()).contains("120ms").contains("[S1]");
         assertThat(askJson.path("evidenceEvaluation").path("status").asText()).isEqualTo("sufficient");
+        assertThat(askJson.path("evidenceEvaluation").path("answerGuardDecision").asText()).isEqualTo("supported");
         assertThat(askJson.path("evidenceEvaluation").path("sufficient").asBoolean()).isTrue();
         assertThat(askJson.path("evidenceEvaluation").path("noAnswerRequired").asBoolean()).isFalse();
         assertThat(askJson.path("evidenceEvaluation").path("matchedRequiredEvidenceTypes"))
@@ -75,6 +76,9 @@ class RagEvidenceEvaluationTests {
                     assertThat(citation.path("sourcePath").asText()).isEqualTo("benchmark.md");
                     assertThat(citation.path("sourceReliabilities"))
                             .anySatisfy(reliability -> assertThat(reliability.asText()).isEqualTo("primary"));
+                    assertThat(citation.path("sourceKinds"))
+                            .anySatisfy(sourceKind -> assertThat(sourceKind.asText()).isEqualTo("benchmark_report"));
+                    assertThat(citation.path("weakEvidence").asBoolean()).isFalse();
                     assertThat(citation.path("supportsRequiredEvidence").asBoolean()).isTrue();
                 });
         assertThat(llmClient.callCount()).isEqualTo(1);
@@ -82,7 +86,54 @@ class RagEvidenceEvaluationTests {
         JsonNode runJson = runDetail(askJson.path("runId").asLong());
         assertThat(runJson.path("events"))
                 .extracting(event -> event.path("eventType").asText())
-                .contains("KNOWLEDGE_EVIDENCE_EVALUATED", "LLM_CALLED");
+                .contains("KNOWLEDGE_EVIDENCE_EVALUATED", "KNOWLEDGE_ANSWER_GUARD_APPLIED", "LLM_CALLED");
+    }
+
+    @Test
+    void generatedTodoEvidenceReturnsPartialGuardAndSkipsLlm() throws Exception {
+        Path generatedDir = Files.createDirectories(knowledgeRoot.resolve(".ai/generated"));
+        Files.writeString(generatedDir.resolve("performance-summary.md"), """
+                # Generated Performance Summary
+
+                TODO placeholder: benchmark p95 latency is expected to be 120ms after future load testing.
+                """);
+        long sourceId = indexSource("weak generated benchmark evidence");
+        llmClient.reset();
+
+        JsonNode askJson = ask(sourceId, "What is the benchmark p95 latency?");
+
+        assertThat(askJson.path("answer").asText())
+                .contains("Partial evidence")
+                .contains("Weakness reasons")
+                .contains("Missing strong required evidence");
+        assertThat(askJson.path("citations")).isNotEmpty();
+        assertThat(askJson.path("evidenceEvaluation").path("status").asText()).isEqualTo("partial_evidence");
+        assertThat(askJson.path("evidenceEvaluation").path("answerGuardDecision").asText()).isEqualTo("partial");
+        assertThat(askJson.path("evidenceEvaluation").path("sufficient").asBoolean()).isFalse();
+        assertThat(askJson.path("evidenceEvaluation").path("noAnswerRequired").asBoolean()).isFalse();
+        assertThat(askJson.path("evidenceEvaluation").path("missingRequiredEvidenceTypes"))
+                .anySatisfy(type -> assertThat(type.asText()).isEqualTo("BENCHMARK"));
+        assertThat(askJson.path("evidenceEvaluation").path("weakEvidenceTypes"))
+                .anySatisfy(type -> assertThat(type.asText()).isEqualTo("BENCHMARK"));
+        assertThat(askJson.path("evidenceEvaluation").path("weakEvidenceReasons"))
+                .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("generated_doc"))
+                .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("todo_like"));
+        assertThat(askJson.path("evidenceEvaluation").path("citationAssessments"))
+                .anySatisfy(citation -> {
+                    assertThat(citation.path("sourcePath").asText()).isEqualTo(".ai/generated/performance-summary.md");
+                    assertThat(citation.path("weakEvidence").asBoolean()).isTrue();
+                    assertThat(citation.path("weaknessReasons"))
+                            .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("generated_doc"));
+                    assertThat(citation.path("scoreReasons"))
+                            .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("todo_penalty"));
+                });
+        assertThat(llmClient.callCount()).isZero();
+
+        JsonNode runJson = runDetail(askJson.path("runId").asLong());
+        assertThat(runJson.path("events"))
+                .extracting(event -> event.path("eventType").asText())
+                .contains("KNOWLEDGE_ANSWER_GUARD_APPLIED")
+                .doesNotContain("PROMPT_BUILT", "LLM_CALLED");
     }
 
     @Test
@@ -102,6 +153,7 @@ class RagEvidenceEvaluationTests {
                 .contains("BENCHMARK")
                 .contains("no-answer guard");
         assertThat(askJson.path("evidenceEvaluation").path("status").asText()).isEqualTo("insufficient_evidence");
+        assertThat(askJson.path("evidenceEvaluation").path("answerGuardDecision").asText()).isEqualTo("insufficient_evidence");
         assertThat(askJson.path("evidenceEvaluation").path("sufficient").asBoolean()).isFalse();
         assertThat(askJson.path("evidenceEvaluation").path("noAnswerRequired").asBoolean()).isTrue();
         assertThat(askJson.path("evidenceEvaluation").path("missingRequiredEvidenceTypes"))
@@ -111,7 +163,7 @@ class RagEvidenceEvaluationTests {
         JsonNode runJson = runDetail(askJson.path("runId").asLong());
         assertThat(runJson.path("events"))
                 .extracting(event -> event.path("eventType").asText())
-                .contains("KNOWLEDGE_EVIDENCE_EVALUATED")
+                .contains("KNOWLEDGE_EVIDENCE_EVALUATED", "KNOWLEDGE_ANSWER_GUARD_APPLIED")
                 .doesNotContain("PROMPT_BUILT", "LLM_CALLED");
     }
 

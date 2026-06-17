@@ -182,6 +182,7 @@ class V04KnowledgeRagTests {
                         "KNOWLEDGE_RETRIEVED",
                         "KNOWLEDGE_EVIDENCE_RETRIEVED",
                         "KNOWLEDGE_EVIDENCE_EVALUATED",
+                        "KNOWLEDGE_ANSWER_GUARD_APPLIED",
                         "PROMPT_BUILT",
                         "LLM_CALLED",
                         "RAG_ANSWER_GENERATED",
