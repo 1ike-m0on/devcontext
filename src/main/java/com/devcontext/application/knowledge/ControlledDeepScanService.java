@@ -1,5 +1,6 @@
 package com.devcontext.application.knowledge;
 
+import com.devcontext.application.context.ReadOnlyContextProvider;
 import com.devcontext.domain.codemap.CodeEndpoint;
 import com.devcontext.domain.codemap.CodeMap;
 import com.devcontext.domain.codemap.CodeMapConfigKey;
@@ -8,6 +9,9 @@ import com.devcontext.domain.codemap.CodeMapFileEntry;
 import com.devcontext.domain.codemap.CodeMapRoutingHint;
 import com.devcontext.domain.codemap.CodeMapTestRelation;
 import com.devcontext.domain.codemap.CodeSymbol;
+import com.devcontext.domain.context.ReadOnlyContextBudget;
+import com.devcontext.domain.context.ReadOnlyContextFileReadRequest;
+import com.devcontext.domain.context.ReadOnlyContextReadResult;
 import com.devcontext.domain.graph.ProjectGraphEdge;
 import com.devcontext.domain.graph.ProjectGraphNode;
 import com.devcontext.domain.knowledge.EvidenceEvaluation;
@@ -21,11 +25,8 @@ import com.devcontext.ports.graph.ProjectGraphRepository;
 import com.devcontext.ports.knowledge.KnowledgeSourceRepository;
 import com.devcontext.ports.project.ProjectRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -46,6 +47,8 @@ public class ControlledDeepScanService {
     private static final int MAX_SCAN_FILES = 4;
     private static final int MAX_SCAN_CHARS = 12_000;
     private static final int MAX_SCAN_LINES = 240;
+    private static final int MAX_CODE_MAP_CHARS = 80_000;
+    private static final int MAX_CODE_MAP_LINES = 2_000;
     private static final Set<KnowledgeEvidenceType> SCANNABLE_EVIDENCE_TYPES = EnumSet.of(
             KnowledgeEvidenceType.API_CONTROLLER,
             KnowledgeEvidenceType.SERVICE_CODE,
@@ -68,22 +71,25 @@ public class ControlledDeepScanService {
     private final ProjectGraphRepository projectGraphRepository;
     private final KnowledgeEvidenceClassifier evidenceClassifier;
     private final ObjectMapper objectMapper;
+    private final ReadOnlyContextProvider readOnlyContextProvider;
 
     public ControlledDeepScanService(
             KnowledgeSourceRepository sourceRepository,
             ProjectRepository projectRepository,
             ProjectGraphRepository projectGraphRepository,
             KnowledgeEvidenceClassifier evidenceClassifier,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ReadOnlyContextProvider readOnlyContextProvider
     ) {
         this.sourceRepository = sourceRepository;
         this.projectRepository = projectRepository;
         this.projectGraphRepository = projectGraphRepository;
         this.evidenceClassifier = evidenceClassifier;
         this.objectMapper = objectMapper;
+        this.readOnlyContextProvider = readOnlyContextProvider;
     }
 
-    public Result scan(Long requestedSourceId, KnowledgeSearchResponse response, EvidenceEvaluation evaluation) {
+    public Result scan(Long runId, Long requestedSourceId, KnowledgeSearchResponse response, EvidenceEvaluation evaluation) {
         if (evaluation == null || evaluation.sufficient()) {
             return Result.skipped("initial_evidence_supported");
         }
@@ -103,7 +109,7 @@ public class ControlledDeepScanService {
         Map<String, CandidateAccumulator> candidateMap = new LinkedHashMap<>();
         List<String> skippedReasons = new ArrayList<>();
         resolveProject(source.get(), root).ifPresent(project -> collectGraphCandidates(project.id(), targetPlan, candidateMap));
-        collectCodeMapCandidates(root, targetPlan, candidateMap, skippedReasons);
+        collectCodeMapCandidates(runId, root, targetPlan, candidateMap, skippedReasons);
 
         List<ScanCandidate> candidates = candidateMap.values().stream()
                 .map(CandidateAccumulator::toCandidate)
@@ -136,13 +142,15 @@ public class ControlledDeepScanService {
                 skippedReasons.add("content_budget_exhausted:" + candidate.relativePath());
                 continue;
             }
-            Optional<Path> file = resolveInsideRoot(root, candidate.relativePath());
-            if (file.isEmpty()) {
-                skippedReasons.add("candidate_not_readable:" + candidate.relativePath());
+            ReadOnlyContextReadResult read = readCandidate(runId, root, candidate, budget);
+            budget.files += read.filesRead();
+            budget.chars += read.charactersReturned();
+            budget.lines += read.linesReturned();
+            budget.budgetLimited = budget.budgetLimited || read.budgetLimited();
+            if (!read.finished()) {
+                skippedReasons.add("candidate_read_" + read.status() + ":" + read.reason() + ":" + candidate.relativePath());
                 continue;
             }
-            ReadOutcome read = readBudgeted(file.get(), budget);
-            budget.files++;
             if (read.content().isBlank()) {
                 skippedReasons.add("candidate_empty:" + candidate.relativePath());
                 continue;
@@ -166,6 +174,25 @@ public class ControlledDeepScanService {
                 budget.chars,
                 budget.lines
         );
+    }
+
+    private ReadOnlyContextReadResult readCandidate(
+            Long runId,
+            Path root,
+            ScanCandidate candidate,
+            ScanBudget budget
+    ) {
+        return readOnlyContextProvider.readFile(new ReadOnlyContextFileReadRequest(
+                runId,
+                root,
+                candidate.relativePath(),
+                ReadOnlyContextBudget.read(
+                        1,
+                        MAX_SCAN_CHARS - budget.chars,
+                        MAX_SCAN_LINES - budget.lines
+                ),
+                "controlled_deep_scan_candidate"
+        ));
     }
 
     private KnowledgeSearchResult toSearchResult(
@@ -216,39 +243,6 @@ public class ControlledDeepScanService {
                 + "```" + codeFenceLanguage(candidate.relativePath()) + "\n"
                 + scannedContent.stripTrailing() + "\n"
                 + "```\n";
-    }
-
-    private ReadOutcome readBudgeted(Path file, ScanBudget budget) {
-        StringBuilder content = new StringBuilder();
-        int charsBefore = budget.chars;
-        int linesBefore = budget.lines;
-        String line = null;
-        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            while ((line = reader.readLine()) != null) {
-                if (budget.lines >= MAX_SCAN_LINES || budget.chars >= MAX_SCAN_CHARS) {
-                    budget.budgetLimited = true;
-                    break;
-                }
-                String lineWithBreak = line + "\n";
-                int remainingChars = MAX_SCAN_CHARS - budget.chars;
-                if (lineWithBreak.length() > remainingChars) {
-                    content.append(lineWithBreak, 0, remainingChars);
-                    budget.chars += remainingChars;
-                    budget.lines++;
-                    budget.budgetLimited = true;
-                    break;
-                }
-                content.append(lineWithBreak);
-                budget.chars += lineWithBreak.length();
-                budget.lines++;
-            }
-        } catch (IOException e) {
-            return new ReadOutcome("", 0, 0);
-        }
-        if (line != null && (budget.lines >= MAX_SCAN_LINES || budget.chars >= MAX_SCAN_CHARS)) {
-            budget.budgetLimited = true;
-        }
-        return new ReadOutcome(content.toString(), budget.lines - linesBefore, budget.chars - charsBefore);
     }
 
     private Optional<KnowledgeSource> resolveSource(Long requestedSourceId, KnowledgeSearchResponse response) {
@@ -310,19 +304,29 @@ public class ControlledDeepScanService {
     }
 
     private void collectCodeMapCandidates(
+            Long runId,
             Path root,
             TargetPlan targetPlan,
             Map<String, CandidateAccumulator> candidateMap,
             List<String> skippedReasons
     ) {
-        Path codeMapPath = root.resolve(".ai").resolve("code-map.json").toAbsolutePath().normalize();
-        if (!codeMapPath.startsWith(root) || !Files.isRegularFile(codeMapPath)) {
+        ReadOnlyContextReadResult codeMapRead = readOnlyContextProvider.readFile(new ReadOnlyContextFileReadRequest(
+                runId,
+                root,
+                ".ai/code-map.json",
+                ReadOnlyContextBudget.read(1, MAX_CODE_MAP_CHARS, MAX_CODE_MAP_LINES),
+                "controlled_deep_scan_code_map"
+        ));
+        if (!codeMapRead.finished()) {
             skippedReasons.add("code_map_missing");
+            if (!codeMapRead.reason().isBlank()) {
+                skippedReasons.add("code_map_read_" + codeMapRead.status() + ":" + codeMapRead.reason());
+            }
             return;
         }
         CodeMap codeMap;
         try {
-            codeMap = objectMapper.readValue(codeMapPath.toFile(), CodeMap.class);
+            codeMap = objectMapper.readValue(codeMapRead.content(), CodeMap.class);
         } catch (IOException e) {
             skippedReasons.add("code_map_unreadable");
             return;
@@ -395,18 +399,6 @@ public class ControlledDeepScanService {
         candidate.addReason(reason);
         if (evidenceType != null) {
             candidate.addEvidenceType(evidenceType);
-        }
-    }
-
-    private Optional<Path> resolveInsideRoot(Path root, String relativePath) {
-        try {
-            Path resolved = root.resolve(relativePath).toAbsolutePath().normalize();
-            if (!resolved.startsWith(root) || !Files.isRegularFile(resolved)) {
-                return Optional.empty();
-            }
-            return Optional.of(resolved);
-        } catch (InvalidPathException e) {
-            return Optional.empty();
         }
     }
 
@@ -759,6 +751,4 @@ public class ControlledDeepScanService {
         private boolean budgetLimited;
     }
 
-    private record ReadOutcome(String content, int linesRead, int charsRead) {
-    }
 }

@@ -77,6 +77,7 @@ public class RagAnswerApplicationService {
             );
             if (!evidenceEvaluation.sufficient()) {
                 ControlledDeepScanService.Result deepScanResult = controlledDeepScanService.scan(
+                        run.id(),
                         command.sourceId(),
                         searchResponse,
                         evidenceEvaluation
