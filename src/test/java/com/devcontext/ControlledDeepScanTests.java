@@ -116,6 +116,8 @@ class ControlledDeepScanTests {
                         "KNOWLEDGE_DEEP_SCAN_STARTED",
                         "KNOWLEDGE_DEEP_SCAN_FINISHED",
                         "KNOWLEDGE_DEEP_SCAN_EVIDENCE_EVALUATED",
+                        "READ_ONLY_CONTEXT_PROVIDER_STARTED",
+                        "READ_ONLY_CONTEXT_PROVIDER_FINISHED",
                         "KNOWLEDGE_ANSWER_GUARD_APPLIED",
                         "LLM_CALLED"
                 );
