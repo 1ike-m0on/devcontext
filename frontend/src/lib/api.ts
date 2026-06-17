@@ -219,6 +219,40 @@ export type ProjectContextStatus = {
   quality?: ContextQualitySummary;
 };
 
+export type ProjectEvidenceCategorySummary = {
+  category: string;
+  count: number;
+  reason: string;
+  paths: string[];
+};
+
+export type ProjectEvidenceSourceGroupSummary = {
+  groupKey: string;
+  label: string;
+  count: number;
+  present: boolean;
+  primaryEvidence: boolean;
+  evidenceTypes: KnowledgeEvidenceType[];
+  sourceKinds: string[];
+  sourceReliabilities: string[];
+  samplePaths: string[];
+};
+
+export type ProjectEvidenceCoverageSummary = {
+  projectId: number;
+  generatedAt?: string;
+  totalEvidenceCount: number;
+  primaryEvidenceCount: number;
+  secondaryEvidenceCount: number;
+  derivedEvidenceCount: number;
+  countsByEvidenceType: Partial<Record<KnowledgeEvidenceType, number>>;
+  countsBySourceKind: Record<string, number>;
+  countsBySourceReliability: Record<string, number>;
+  sourceGroups: ProjectEvidenceSourceGroupSummary[];
+  missingCategories: ProjectEvidenceCategorySummary[];
+  skippedCategories: ProjectEvidenceCategorySummary[];
+};
+
 export type ContextGenerationResult = {
   projectId: number;
   generatedFiles: string[];
@@ -416,6 +450,8 @@ export const api = {
   deleteProject: (projectId: number) =>
     request<{ projectId: number; deleted: boolean }>(`/api/projects/${projectId}`, { method: "DELETE" }),
   contextStatus: (projectId: number) => request<ProjectContextStatus>(`/api/projects/${projectId}/context`),
+  projectEvidenceCoverage: (projectId: number) =>
+    request<ProjectEvidenceCoverageSummary>(`/api/projects/${projectId}/context/evidence-coverage`),
   generateContext: (projectId: number, body: { overwriteGenerated: boolean; overwriteManual: boolean }) =>
     request<ContextGenerationResult>(`/api/projects/${projectId}/context/generate`, {
       method: "POST",

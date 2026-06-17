@@ -46,6 +46,8 @@ import {
   LlmSettings,
   Project,
   ProjectContextStatus,
+  ProjectEvidenceCoverageSummary,
+  ContextDocumentStatus,
   ContextGenerationResult,
   ContextQualitySummary,
   RagAnswerResult,
@@ -93,6 +95,11 @@ function App() {
   const contextQuery = useQuery({
     queryKey: ["project-context", activeProjectId],
     queryFn: () => api.contextStatus(activeProjectId as number),
+    enabled: Boolean(activeProjectId),
+  });
+  const evidenceCoverageQuery = useQuery({
+    queryKey: ["project-evidence-coverage", activeProjectId],
+    queryFn: () => api.projectEvidenceCoverage(activeProjectId as number),
     enabled: Boolean(activeProjectId),
   });
 
@@ -173,6 +180,8 @@ function App() {
               <Overview
                 project={selectedProject}
                 contextStatus={contextQuery.data}
+                evidenceCoverage={evidenceCoverageQuery.data}
+                evidenceCoverageLoading={evidenceCoverageQuery.isLoading}
                 decisions={decisionsQuery.data ?? []}
                 sources={sourcesQuery.data ?? []}
                 onGo={setActiveView}
@@ -283,6 +292,8 @@ function TopBar({
 function Overview({
   project,
   contextStatus,
+  evidenceCoverage,
+  evidenceCoverageLoading,
   decisions,
   sources,
   onGo,
@@ -291,6 +302,8 @@ function Overview({
 }: {
   project: Project | null;
   contextStatus?: ProjectContextStatus;
+  evidenceCoverage?: ProjectEvidenceCoverageSummary;
+  evidenceCoverageLoading: boolean;
   decisions: DecisionCard[];
   sources: KnowledgeSource[];
   onGo: (view: View) => void;
@@ -312,6 +325,7 @@ function Overview({
     onSuccess: (result) => {
       setGenerationResult(result);
       void queryClient.invalidateQueries({ queryKey: ["project-context", project?.id] });
+      void queryClient.invalidateQueries({ queryKey: ["project-evidence-coverage", project?.id] });
       const written = result.generatedFiles.length + result.manualCreatedFiles.length;
       const skipped = result.generatedSkippedFiles.length + result.manualSkippedFiles.length;
       onNotice(`上下文更新完成：写入 ${written} 个，跳过 ${skipped} 个。`);
@@ -319,9 +333,11 @@ function Overview({
     onError: (error) => onNotice(error instanceof Error ? error.message : "上下文生成失败。"),
   });
 
-  const existingDocs = contextStatus?.documents.filter((item) => item.exists).length ?? 0;
-  const totalDocs = contextStatus?.documents.length ?? 0;
+  const auxiliaryDocs = auxiliaryContextDocuments(contextStatus?.documents ?? []);
+  const existingDocs = auxiliaryDocs.filter((item) => item.exists).length;
+  const totalDocs = auxiliaryDocs.length;
   const quality = contextStatus?.quality;
+  const primaryEvidence = primaryEvidenceStats(evidenceCoverage);
 
   return (
     <div className="grid gap-5">
@@ -389,9 +405,23 @@ function Overview({
               </span>
             </label>
           </div>
-          <div className="mt-5 grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-md:grid-cols-1">
-            <Metric label="上下文资产" value={totalDocs ? `${existingDocs}/${totalDocs}` : "未生成"} tone={existingDocs ? "good" : "warn"} />
-            <Metric label="可信度" value={quality ? `${quality.score}` : "-"} tone={qualityTone(quality?.level)} />
+          <div className="mt-5 grid grid-cols-6 gap-3 max-xl:grid-cols-3 max-lg:grid-cols-2 max-md:grid-cols-1">
+            <Metric
+              label="强证据"
+              value={evidenceCoverage ? `${evidenceCoverage.primaryEvidenceCount}` : evidenceCoverageLoading ? "扫描中" : "-"}
+              tone={evidenceCoverageTone(primaryEvidence)}
+            />
+            <Metric
+              label="原始覆盖"
+              value={primaryEvidence.total ? `${primaryEvidence.present}/${primaryEvidence.total}` : evidenceCoverageLoading ? "扫描中" : "-"}
+              tone={evidenceCoverageTone(primaryEvidence)}
+            />
+            <Metric
+              label="证据缺口"
+              value={evidenceCoverage ? `${primaryEvidence.missing}` : "-"}
+              tone={primaryEvidence.missing ? "warn" : evidenceCoverage ? "good" : "neutral"}
+            />
+            <Metric label="辅助文档" value={totalDocs ? `${existingDocs}/${totalDocs}` : "未生成"} tone={existingDocs ? "good" : "warn"} />
             <Metric label="活跃决策" value={`${decisions.length}`} tone={decisions.length ? "good" : "neutral"} />
             <Metric label="知识源" value={`${sources.length}`} tone={sources.length ? "good" : "neutral"} />
           </div>
@@ -409,7 +439,9 @@ function Overview({
 
       <ContextGenerationPanel result={generationResult} />
 
-      <ContextQualityPanel quality={quality} />
+      <EvidenceCoveragePanel coverage={evidenceCoverage} loading={evidenceCoverageLoading} />
+
+      <SupportingDocumentQualityPanel quality={quality} documents={auxiliaryDocs} />
 
       <section className="grid grid-cols-3 gap-5 max-xl:grid-cols-1">
         <TaskCard
@@ -429,36 +461,13 @@ function Overview({
         <TaskCard
           icon={BookOpen}
           title="查询项目知识"
-          text="索引项目文档和 AI 上下文资产，进行带引用问答。"
+          text="索引源码、配置、SQL、测试、报告和辅助文档，进行带引用问答。"
           disabled={!project}
           onClick={() => onGo("knowledge")}
         />
       </section>
 
-      <section className="rounded-lg border border-border bg-card">
-        <div className="flex items-center justify-between border-b border-border p-4">
-          <div>
-            <h3 className="font-semibold">上下文资产</h3>
-            <p className="mt-1 text-sm text-muted-foreground">这些文件会作为后续审查和问答的项目事实。</p>
-          </div>
-        </div>
-        <div className="grid divide-y divide-border">
-          {!contextStatus ? (
-            <EmptyState text="选择项目后可以查看上下文状态。" />
-          ) : (
-            contextStatus.documents.map((doc) => (
-              <div key={doc.path} className="grid grid-cols-[160px_minmax(0,1fr)_120px] gap-4 px-4 py-3 text-sm max-md:grid-cols-1">
-                <span className="font-medium">{doc.type}</span>
-                <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{doc.path}</span>
-                <div className="flex flex-wrap justify-end gap-2 max-md:justify-start">
-                  <Badge variant={doc.exists ? "success" : "warning"}>{doc.exists ? doc.status : "missing"}</Badge>
-                  {quality?.issues.some((issue) => issue.path === doc.path) ? <Badge variant="warning">待确认</Badge> : null}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+      <SupportingDocumentAssetsPanel documents={auxiliaryDocs} quality={quality} hasContextStatus={Boolean(contextStatus)} />
     </div>
   );
 }
@@ -612,15 +621,175 @@ function GenerationList({ title, items, empty }: { title: string; items: string[
   );
 }
 
-function ContextQualityPanel({ quality }: { quality?: ContextQualitySummary }) {
+function EvidenceCoveragePanel({ coverage, loading }: { coverage?: ProjectEvidenceCoverageSummary; loading: boolean }) {
+  const primaryGroups = primaryEvidenceGroups(coverage);
+  const stats = primaryEvidenceStats(coverage);
+  const primaryGroupKeys = new Set(primaryGroups.map((group) => group.groupKey));
+  const primaryMissing = (coverage?.missingCategories ?? []).filter((item) => primaryGroupKeys.has(item.category));
+  const missingByCategory = new Map((coverage?.missingCategories ?? []).map((item) => [item.category, item]));
+  const skipped = coverage?.skippedCategories ?? [];
+
+  if (loading) {
+    return (
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-start gap-3">
+          <Loader2 className="mt-0.5 size-5 animate-spin text-primary" />
+          <div>
+            <h3 className="font-semibold">原始证据覆盖</h3>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">正在扫描 source / config / SQL / test / report 覆盖。</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (!coverage) {
+    return (
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-start gap-3">
+          <FileSearch className="mt-0.5 size-5 text-muted-foreground" />
+          <div>
+            <h3 className="font-semibold">原始证据覆盖</h3>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">选择项目后，这里会优先展示源码、配置、SQL、测试和报告覆盖。</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className={cn("grid size-10 shrink-0 place-items-center rounded-md border", stats.missing ? "border-amber-400/25 bg-amber-400/10 text-amber-200" : "border-emerald-400/25 bg-emerald-400/10 text-emerald-200")}>
+            <Database className="size-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-semibold">原始证据覆盖</h3>
+              <Badge variant={stats.missing ? "warning" : "success"}>{stats.present}/{stats.total} 类主证据</Badge>
+            </div>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+              主信号来自源码、配置、SQL/schema/mapper、测试和 benchmark/review/runtime report；生成文档和人工文档只作为辅助资产。
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs max-sm:w-full">
+          <div className="rounded-md bg-background px-3 py-2">
+            <div className="text-muted-foreground">primary</div>
+            <div className="mt-1 text-base font-semibold">{coverage.primaryEvidenceCount}</div>
+          </div>
+          <div className="rounded-md bg-background px-3 py-2">
+            <div className="text-muted-foreground">secondary</div>
+            <div className="mt-1 text-base font-semibold">{coverage.secondaryEvidenceCount}</div>
+          </div>
+          <div className="rounded-md bg-background px-3 py-2">
+            <div className="text-muted-foreground">derived</div>
+            <div className="mt-1 text-base font-semibold">{coverage.derivedEvidenceCount}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3">
+        {primaryGroups.map((group) => {
+          const missing = missingByCategory.get(group.groupKey);
+          return (
+            <div key={group.groupKey} className="rounded-md border border-border bg-background p-4">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="font-medium">{sourceGroupLabel(group.groupKey, group.label)}</span>
+                    <Badge variant={group.present ? "success" : "warning"}>{group.present ? `${group.count} evidence` : "missing"}</Badge>
+                    {group.sourceReliabilities.map((reliability) => (
+                      <Badge key={reliability} variant={reliability === "primary" ? "success" : "secondary"}>{sourceReliabilityLabel(reliability)}</Badge>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+                    {group.sourceKinds.map((kind) => (
+                      <Badge key={kind} variant="secondary">{sourceKindLabel(kind)}</Badge>
+                    ))}
+                    {group.evidenceTypes.map((type) => (
+                      <Badge key={type} variant="secondary">{evidenceTypeLabel(type)}</Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {group.samplePaths.length ? (
+                <div className="mt-3 grid gap-1">
+                  {group.samplePaths.slice(0, 3).map((path) => (
+                    <div key={path} className="min-w-0 truncate font-mono text-xs text-muted-foreground">{path}</div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-muted-foreground">{missing?.reason ?? "还没有发现这类原始证据。"}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {skipped.length || primaryMissing.length ? (
+        <div className="mt-5 grid grid-cols-2 gap-3 max-lg:grid-cols-1">
+          <EvidenceCategoryList title="主证据缺口" items={primaryMissing} variant="warning" />
+          <EvidenceCategoryList title="跳过" items={skipped} variant="secondary" />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function EvidenceCategoryList({
+  title,
+  items,
+  variant,
+}: {
+  title: string;
+  items: ProjectEvidenceCoverageSummary["missingCategories"];
+  variant: BadgeVariant;
+}) {
+  if (!items.length) {
+    return (
+      <div className="rounded-md border border-border bg-background p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-medium">{title}</div>
+          <Badge variant="success">0</Badge>
+        </div>
+        <p className="mt-3 text-sm text-muted-foreground">暂无记录。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border bg-background p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="font-medium">{title}</div>
+        <Badge variant={variant}>{items.length}</Badge>
+      </div>
+      <div className="mt-3 grid max-h-48 gap-3 overflow-auto pr-1">
+        {items.slice(0, 6).map((item) => (
+          <div key={item.category} className="text-sm">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Badge variant={variant}>{sourceGroupLabel(item.category, item.category)}</Badge>
+              <span className="text-muted-foreground">{item.count}</span>
+            </div>
+            <p className="mt-1 leading-5 text-muted-foreground">{item.reason}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SupportingDocumentQualityPanel({ quality, documents }: { quality?: ContextQualitySummary; documents: ContextDocumentStatus[] }) {
+  const existingDocuments = documents.filter((document) => document.exists).length;
   if (!quality) {
     return (
       <section className="rounded-lg border border-border bg-card p-5">
         <div className="flex items-start gap-3">
           <FileSearch className="mt-0.5 size-5 text-muted-foreground" />
           <div>
-            <h3 className="font-semibold">上下文可信度</h3>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">生成上下文后，这里会显示 AI 文档是否可以直接用于问答和审查。</p>
+            <h3 className="font-semibold">辅助文档完整度</h3>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">生成上下文后，这里会显示 `.ai` 生成/人工文档是否可作为辅助说明。</p>
           </div>
         </div>
       </section>
@@ -639,7 +808,7 @@ function ContextQualityPanel({ quality }: { quality?: ContextQualitySummary }) {
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="font-semibold">上下文可信度</h3>
+              <h3 className="font-semibold">辅助文档完整度</h3>
               <Badge variant={meta.badge}>{meta.label}</Badge>
             </div>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
@@ -657,8 +826,8 @@ function ContextQualityPanel({ quality }: { quality?: ContextQualitySummary }) {
             <div className="mt-1 text-base font-semibold">{quality.todoCount}</div>
           </div>
           <div className="rounded-md bg-background px-3 py-2">
-            <div className="text-muted-foreground">文档</div>
-            <div className="mt-1 text-base font-semibold">{quality.existingDocuments}/{quality.totalDocuments}</div>
+            <div className="text-muted-foreground">辅助文档</div>
+            <div className="mt-1 text-base font-semibold">{existingDocuments}/{documents.length}</div>
           </div>
         </div>
       </div>
@@ -682,9 +851,49 @@ function ContextQualityPanel({ quality }: { quality?: ContextQualitySummary }) {
         </div>
       ) : (
         <div className="mt-5 rounded-md border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-          当前上下文资产没有发现缺失或 TODO，适合进入知识库索引和代码审查。
+          当前辅助文档没有发现缺失或 TODO，可作为原始证据之外的概览和人工备注。
         </div>
       )}
+    </section>
+  );
+}
+
+function SupportingDocumentAssetsPanel({
+  documents,
+  quality,
+  hasContextStatus,
+}: {
+  documents: ContextDocumentStatus[];
+  quality?: ContextQualitySummary;
+  hasContextStatus: boolean;
+}) {
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border p-4">
+        <div>
+          <h3 className="font-semibold">辅助文档资产</h3>
+          <p className="mt-1 text-sm text-muted-foreground">生成/人工文档、`.ai` 资产和代码地图用于概览、备注和导航，不作为主证据覆盖信号。</p>
+        </div>
+      </div>
+      <div className="grid divide-y divide-border">
+        {!hasContextStatus ? (
+          <EmptyState text="选择项目后可以查看辅助文档状态。" />
+        ) : documents.length ? (
+          documents.map((doc) => (
+            <div key={doc.path} className="grid grid-cols-[160px_minmax(0,1fr)_160px] gap-4 px-4 py-3 text-sm max-md:grid-cols-1">
+              <span className="font-medium">{doc.type}</span>
+              <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{doc.path}</span>
+              <div className="flex flex-wrap justify-end gap-2 max-md:justify-start">
+                <Badge variant={doc.generated ? "secondary" : "default"}>{doc.generated ? "generated" : "manual"}</Badge>
+                <Badge variant={doc.exists ? "success" : "warning"}>{doc.exists ? doc.status : "missing"}</Badge>
+                {quality?.issues.some((issue) => issue.path === doc.path) ? <Badge variant="warning">待确认</Badge> : null}
+              </div>
+            </div>
+          ))
+        ) : (
+          <EmptyState text="没有可展示的辅助文档资产。" />
+        )}
+      </div>
     </section>
   );
 }
@@ -3232,11 +3441,45 @@ function deriveReviewOutcomeSummary(issues: ReviewIssue[]): ReviewOutcomeSummary
   return summary;
 }
 
-function qualityTone(level?: string): "good" | "warn" | "bad" | "neutral" {
-  if (level === "high") return "good";
-  if (level === "medium") return "warn";
-  if (level === "low") return "bad";
-  return "neutral";
+const PRIMARY_EVIDENCE_GROUP_ORDER = [
+  "source_code",
+  "configuration",
+  "sql_schema_mapper",
+  "test",
+  "benchmark_review_runtime_report",
+];
+
+function auxiliaryContextDocuments(documents: ContextDocumentStatus[]) {
+  return documents.filter((document) => document.generated || document.path.startsWith(".ai/"));
+}
+
+function primaryEvidenceGroups(coverage?: ProjectEvidenceCoverageSummary) {
+  const order = new Map(PRIMARY_EVIDENCE_GROUP_ORDER.map((key, index) => [key, index]));
+  return (coverage?.sourceGroups ?? [])
+    .filter((group) => group.primaryEvidence)
+    .sort((left, right) => {
+      const leftOrder = order.get(left.groupKey) ?? 99;
+      const rightOrder = order.get(right.groupKey) ?? 99;
+      return leftOrder - rightOrder || sourceGroupLabel(left.groupKey, left.label).localeCompare(sourceGroupLabel(right.groupKey, right.label), "zh-CN");
+    });
+}
+
+function primaryEvidenceStats(coverage?: ProjectEvidenceCoverageSummary) {
+  const groups = primaryEvidenceGroups(coverage);
+  const total = groups.length;
+  const present = groups.filter((group) => group.present).length;
+  return {
+    total,
+    present,
+    missing: total - present,
+  };
+}
+
+function evidenceCoverageTone(stats: { total: number; present: number; missing: number }): "good" | "warn" | "bad" | "neutral" {
+  if (!stats.total) return "neutral";
+  if (stats.missing === 0) return "good";
+  if (stats.present > 0) return "warn";
+  return "bad";
 }
 
 function qualityMeta(level: string): {
@@ -3248,8 +3491,8 @@ function qualityMeta(level: string): {
 } {
   if (level === "high") {
     return {
-      label: "可直接使用",
-      description: "自动上下文资产较完整，知识库问答和代码审查可以优先信任这些项目事实。",
+      label: "辅助资料完整",
+      description: "生成文档和人工文档较完整，可帮助概览项目，但实现结论仍应优先查看原始证据。",
       badge: "success",
       icon: CheckCircle2,
       iconClass: "border-emerald-400/25 bg-emerald-400/10 text-emerald-200",
@@ -3257,16 +3500,16 @@ function qualityMeta(level: string): {
   }
   if (level === "medium") {
     return {
-      label: "需要抽查",
-      description: "上下文可用，但仍有缺失或 TODO。适合辅助问答，关键结论需要打开来源文件确认。",
+      label: "需要补充",
+      description: "辅助文档可用，但仍有缺失或 TODO。适合做概览，关键结论需要回到源码、配置、SQL、测试或报告确认。",
       badge: "warning",
       icon: ShieldCheck,
       iconClass: "border-amber-400/25 bg-amber-400/10 text-amber-200",
     };
   }
   return {
-    label: "不建议直接依赖",
-    description: "项目事实还没有被确认，AI 的回答可能只是基于代码结构的推断。请先处理下方待确认项。",
+    label: "辅助资料不足",
+    description: "辅助文档还没有被确认。请优先查看上方原始证据覆盖，再决定是否补充 `.ai` 文档。",
     badge: "danger",
     icon: AlertTriangle,
     iconClass: "border-red-400/25 bg-red-400/10 text-red-200",
@@ -3283,6 +3526,51 @@ function qualityIssueLabel(severity?: string) {
   if (severity === "error") return "阻塞";
   if (severity === "warning") return "待确认";
   return "提示";
+}
+
+function sourceGroupLabel(groupKey: string, fallback?: string) {
+  const labels: Record<string, string> = {
+    source_code: "源码",
+    configuration: "配置",
+    sql_schema_mapper: "SQL / schema / mapper",
+    test: "测试",
+    handwritten_documentation: "手写文档",
+    generated_documentation: "生成文档",
+    benchmark_review_runtime_report: "benchmark / review / runtime report",
+    project_root: "项目根目录",
+    project_file_scan: "项目文件扫描",
+  };
+  return labels[groupKey] ?? fallback ?? groupKey;
+}
+
+function sourceKindLabel(kind: string) {
+  const labels: Record<string, string> = {
+    api_surface: "API",
+    benchmark_report: "benchmark report",
+    cache: "cache",
+    ci_pipeline: "CI",
+    code_structure: "code map",
+    configuration: "config",
+    data_access: "mapper",
+    data_schema: "SQL/schema",
+    deployment: "deploy",
+    documentation: "docs",
+    message_queue: "queue",
+    observability: "observability",
+    security: "security",
+    source_code: "source",
+    test_artifact: "test",
+  };
+  return labels[kind] ?? kind;
+}
+
+function sourceReliabilityLabel(reliability: string) {
+  const labels: Record<string, string> = {
+    primary: "strong",
+    secondary: "supporting",
+    derived: "derived",
+  };
+  return labels[reliability] ?? reliability;
 }
 
 function MiniProcess({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) {
