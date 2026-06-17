@@ -69,8 +69,19 @@ public class RagAnswerApplicationService {
                     null,
                     null
             );
-            if (evidenceEvaluation.noAnswerRequired()) {
-                String answer = evidenceEvaluationService.insufficientEvidenceAnswer(evidenceEvaluation);
+            runService.recordEvent(
+                    run.id(),
+                    "KNOWLEDGE_ANSWER_GUARD_APPLIED",
+                    evidenceEvaluation.answerGuardDecision(),
+                    evaluationSummary(evidenceEvaluation),
+                    "success",
+                    null,
+                    null
+            );
+            if (!evidenceEvaluation.sufficient()) {
+                String answer = evidenceEvaluation.noAnswerRequired()
+                        ? evidenceEvaluationService.insufficientEvidenceAnswer(evidenceEvaluation)
+                        : evidenceEvaluationService.partialEvidenceAnswer(evidenceEvaluation);
                 runService.finishRun(run, 0, 0);
                 return new RagAnswerResult(
                         run.id(),
@@ -124,8 +135,10 @@ public class RagAnswerApplicationService {
 
     private String evaluationSummary(EvidenceEvaluation evaluation) {
         return evaluation.status()
+                + "; guard=" + evaluation.answerGuardDecision()
                 + "; matchedRequired=" + evaluation.matchedRequiredEvidenceTypes()
                 + "; missingRequired=" + evaluation.missingRequiredEvidenceTypes()
-                + "; matchedPreferred=" + evaluation.matchedPreferredEvidenceTypes();
+                + "; matchedPreferred=" + evaluation.matchedPreferredEvidenceTypes()
+                + "; weakEvidence=" + evaluation.weakEvidenceTypes();
     }
 }
