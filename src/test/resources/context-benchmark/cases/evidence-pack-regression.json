@@ -1,0 +1,256 @@
+[
+  {
+    "caseId": "context-generation-source-pack",
+    "suite": "evidence-pack",
+    "question": "上下文生成具体怎么做？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "context-generation", "natural-regression"],
+    "expected": {
+      "intent": "implementation_detail",
+      "evidenceGroups": ["controller_entrypoint", "application_service", "key_model_result", "test_or_contract"],
+      "sourcePathPatterns": [
+        "src/main/java/**/ProjectContextController.java",
+        "src/main/java/**/ProjectContextAssetApplicationService.java",
+        "src/main/java/**/ContextGenerationResult.java",
+        "src/test/java/**/Mvp1ProjectContextAssetsTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 8,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "evidence-coverage-api-source-pack",
+    "suite": "evidence-pack",
+    "question": "evidence coverage API 怎么实现？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "sourceCapability": "pending-product-context",
+    "tags": ["positive", "coverage", "natural-regression", "pending", "future-product-context"],
+    "expected": {
+      "intent": "implementation_detail",
+      "evidenceGroups": ["controller_entrypoint", "application_service", "key_model_result", "test_or_contract"],
+      "sourcePathPatterns": [
+        "src/main/java/**/ProjectContextController.java",
+        "src/main/java/**/ProjectEvidenceCatalogApplicationService.java",
+        "src/main/java/**/ProjectEvidenceCoverageSummary.java",
+        "src/test/java/**/SourceGroundedKnowledgeRagTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 8,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "queryplan-source-pack",
+    "suite": "evidence-pack",
+    "question": "QueryPlan 怎么设置 required evidence？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "queryplan", "natural-regression"],
+    "expected": {
+      "intent": "implementation_detail",
+      "sourcePathPatterns": [
+        "src/main/java/**/KnowledgeQueryPlanner.java",
+        "src/main/java/**/KnowledgeQueryPlan.java",
+        "src/test/java/**/KnowledgeQueryPlanContractTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["src/main/resources/db/schema.sql", "docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 7,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "review-false-positive-source-pack",
+    "suite": "evidence-pack",
+    "question": "false positive 反馈怎么影响 review？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "review", "natural-regression"],
+    "expected": {
+      "intent": "review_context_detail",
+      "evidenceGroups": ["review_application_service", "feedback_memory_signal", "postprocessor_filtering", "review_issue_model", "test_or_smoke"],
+      "sourcePathPatterns": [
+        "src/main/java/**/ReviewApplicationService.java",
+        "src/main/java/**/ReviewMemorySignalService.java",
+        "src/main/java/**/ReviewReportPostProcessor.java",
+        "src/test/java/**/ReviewMemorySignalBenchmarkSmokeTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 8,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "agent-event-db-chain",
+    "suite": "evidence-pack",
+    "question": "SQL 怎么写的？agent_event 表、repository 和 Java model 怎么串起来？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "database", "chain", "natural-regression"],
+    "expected": {
+      "intent": "database_detail",
+      "evidenceGroups": ["schema", "repository_sql", "entity_or_model", "migration_runner"],
+      "evidenceChain": {
+        "name": "agent_event",
+        "schemaPattern": "src/main/resources/db/schema.sql",
+        "repositoryPattern": "src/main/java/**/JdbcAgentEventRepository.java",
+        "modelPattern": "src/main/java/**/domain/run/AgentEvent.java",
+        "migrationPattern": "src/main/java/**/JdbcSchemaMigrationRunner.java"
+      },
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 8,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "llm-settings-source-pack",
+    "suite": "evidence-pack",
+    "question": "LLM settings 怎么切 provider？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "llm", "settings", "natural-regression"],
+    "expected": {
+      "intent": "configuration_detail",
+      "evidenceGroups": ["properties", "settings_controller", "local_config_store", "provider_client", "test_endpoint"],
+      "sourcePathPatterns": [
+        "src/main/java/**/DevContextLlmProperties.java",
+        "src/main/java/**/LlmSettingsController.java",
+        "src/main/java/**/LocalLlmSettingsStore.java",
+        "src/main/java/**/DeepSeekLlmClient.java",
+        "src/test/java/**/LlmSettingsControllerTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 9,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "project-graph-neighbors-source-pack",
+    "suite": "evidence-pack",
+    "question": "ProjectGraph neighbors API 的实现入口、service、返回模型和测试在哪里？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "graph"],
+    "expected": {
+      "intent": "implementation_detail",
+      "sourcePathPatterns": [
+        "src/main/java/**/ProjectGraphController.java",
+        "src/main/java/**/ProjectGraphApplicationService.java",
+        "src/main/java/**/ProjectGraphNeighborhood.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 7,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "controlled-deep-scan-source-pack",
+    "suite": "evidence-pack",
+    "question": "ControlledDeepScanService 和 SandboxedReadOnlyContextProvider 是怎么补查候选源码的？核心源码和测试在哪里？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "deep-scan"],
+    "expected": {
+      "intent": "implementation_detail",
+      "sourcePathPatterns": [
+        "src/main/java/**/ControlledDeepScanService.java",
+        "src/main/java/**/SandboxedReadOnlyContextProvider.java",
+        "src/test/java/**/ControlledDeepScanTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 7,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "source-evidence-loop-source-pack",
+    "suite": "evidence-pack",
+    "question": "SourceEvidenceLoopProbe 和 SourceEvidenceLoopKnowledgeAdapter 是怎么选择 evidence pack 的？核心源码和 contract test 在哪里？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "sourceCapability": "pending-product-context",
+    "tags": ["positive", "source-evidence-loop", "pending", "future-product-context"],
+    "expected": {
+      "intent": "implementation_detail",
+      "sourcePathPatterns": [
+        "src/main/java/**/SourceEvidenceLoopProbe.java",
+        "src/main/java/**/SourceEvidenceLoopKnowledgeAdapter.java",
+        "src/test/java/**/SourceEvidenceLoopProbeTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 7,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "knowledge-answer-guard-source-pack",
+    "suite": "evidence-pack",
+    "question": "Knowledge RAG 的 evidence-grounded answer guard 是怎么判断 supported/partial/insufficient 的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "answer-guard"],
+    "expected": {
+      "intent": "implementation_detail",
+      "sourcePathPatterns": [
+        "src/main/java/**/KnowledgeEvidenceEvaluationService.java",
+        "src/main/java/**/RagAnswerApplicationService.java",
+        "src/test/java/**/RagEvidenceEvaluationTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 7,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "knowledge-index-coverage-source-pack",
+    "suite": "evidence-pack",
+    "question": "knowledge source index 和 evidence coverage report 是在哪里生成的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "coverage", "index"],
+    "expected": {
+      "intent": "implementation_detail",
+      "sourcePathPatterns": [
+        "src/main/java/**/KnowledgeIndexApplicationService.java",
+        "src/main/java/**/KnowledgeCoverageService.java",
+        "src/main/java/**/EvidenceCoverageReport.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 7,
+      "maxUnexpectedSourceCount": 4
+    }
+  },
+  {
+    "caseId": "read-only-provider-source-pack",
+    "suite": "evidence-pack",
+    "question": "ReadOnlyContextProvider 的沙箱读取和 trace 是怎么实现的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "projectRoot": "devcontext",
+    "tags": ["positive", "provider"],
+    "expected": {
+      "intent": "implementation_detail",
+      "sourcePathPatterns": [
+        "src/main/java/**/SandboxedReadOnlyContextProvider.java",
+        "src/main/java/**/AgentRunReadOnlyContextTraceRecorder.java",
+        "src/test/java/**/ReadOnlyContextProviderTests.java"
+      ],
+      "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
+      "maxProductEvidenceCount": 7,
+      "maxUnexpectedSourceCount": 4
+    }
+  }
+]

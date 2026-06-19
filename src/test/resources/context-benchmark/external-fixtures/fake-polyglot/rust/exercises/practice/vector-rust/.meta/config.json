@@ -1,0 +1,13 @@
+{
+  "files": {
+    "solution": [
+      "src/clock.rs"
+    ],
+    "test": [
+      "tests/clock_test.rs"
+    ],
+    "example": [
+      "examples/clock_example.rs"
+    ]
+  }
+}

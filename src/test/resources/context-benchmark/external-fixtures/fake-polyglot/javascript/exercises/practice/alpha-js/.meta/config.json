@@ -1,0 +1,13 @@
+{
+  "files": {
+    "solution": [
+      "src/main.js"
+    ],
+    "test": [
+      "src/main.test.js"
+    ],
+    "example": [
+      "example.js"
+    ]
+  }
+}

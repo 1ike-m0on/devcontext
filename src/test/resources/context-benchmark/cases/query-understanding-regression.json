@@ -1,0 +1,377 @@
+[
+  {
+    "caseId": "evidence-coverage-api-cn",
+    "suite": "query-understanding",
+    "question": "项目证据覆盖率 evidence-coverage API 是怎么实现的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "coverage", "api"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["test_strategy"],
+      "targetTerms": ["evidence_coverage_api"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "evidence-coverage-endpoint-cn",
+    "suite": "query-understanding",
+    "question": "evidence coverage endpoint 背后调用哪些类？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "coverage", "endpoint"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["test_strategy"],
+      "targetTerms": ["evidence_coverage_api"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "evidence-coverage-result-model-cn",
+    "suite": "query-understanding",
+    "question": "项目证据覆盖报告的返回对象在哪里定义？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "coverage", "model"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["test_strategy"],
+      "targetTerms": ["evidence_coverage_api"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "queryplan-required-evidence-cn",
+    "suite": "query-understanding",
+    "question": "QueryPlan 是怎么识别 SQL/database 问题并设置 required evidence types 的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "queryplan"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["database_detail"],
+      "targetTerms": ["query_plan", "required_evidence"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "required-evidence-location-cn",
+    "suite": "query-understanding",
+    "question": "requiredEvidence 是在哪里设置的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "queryplan"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["database_detail", "test_strategy"],
+      "targetTerms": ["required_evidence"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "knowledge-query-planner-classification-cn",
+    "suite": "query-understanding",
+    "question": "KnowledgeQueryPlanner 怎么给问题分类？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "queryplan"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["database_detail"],
+      "targetTerms": ["KnowledgeQueryPlanner"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "database-detail-routing-meta-cn",
+    "suite": "query-understanding",
+    "question": "为什么 SQL 问题会进入 database_detail？相关判断代码在哪里？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "queryplan", "meta"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["database_detail"],
+      "targetTerms": ["database_detail_intent"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "review-false-positive-memory-cn",
+    "suite": "query-understanding",
+    "question": "false positive 反馈进入 review memory 后，后续 code review 是在哪里加载并过滤问题的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "review"],
+    "expected": {
+      "intent": "review_context_detail",
+      "forbiddenIntents": ["test_strategy"],
+      "targetTerms": ["false_positive_feedback", "review_memory"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "llm-provider-settings-cn",
+    "suite": "query-understanding",
+    "question": "LLM settings 是怎么切换 provider、model、key 和 timeout 的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["regression", "llm", "settings"],
+    "expected": {
+      "intent": "configuration_detail",
+      "requiredEvidenceTypes": ["CONFIG"]
+    }
+  },
+  {
+    "caseId": "deepseek-provider-config-en",
+    "suite": "query-understanding",
+    "question": "How is the DeepSeek provider connected and how are timeout, API key, and model configured?",
+    "language": "en",
+    "projectKind": "devcontext",
+    "tags": ["llm", "settings"],
+    "expected": {
+      "intent": "configuration_detail",
+      "requiredEvidenceTypes": ["CONFIG"]
+    }
+  },
+  {
+    "caseId": "sql-index-query-cn",
+    "suite": "query-understanding",
+    "question": "SQL 里用了哪些索引 index?",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["database"],
+    "expected": {
+      "intent": "database_detail",
+      "requiredEvidenceTypes": ["SQL_SCHEMA", "MAPPER"]
+    }
+  },
+  {
+    "caseId": "agent-event-db-chain-cn",
+    "suite": "query-understanding",
+    "question": "agent_event 表的 SQL、repository 和 Java model 是怎么串起来的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["database", "chain"],
+    "expected": {
+      "intent": "database_detail",
+      "requiredEvidenceTypes": ["SQL_SCHEMA", "MAPPER"]
+    }
+  },
+  {
+    "caseId": "database-persistence-en",
+    "suite": "query-understanding",
+    "question": "How is database persistence implemented?",
+    "language": "en",
+    "projectKind": "devcontext",
+    "tags": ["database"],
+    "expected": {
+      "intent": "database_detail",
+      "requiredEvidenceTypes": ["SQL_SCHEMA", "MAPPER"]
+    }
+  },
+  {
+    "caseId": "observability-metrics-en",
+    "suite": "query-understanding",
+    "question": "How is monitoring and observability done with metrics?",
+    "language": "en",
+    "projectKind": "devcontext",
+    "tags": ["observability"],
+    "expected": {
+      "intent": "observability_detail",
+      "requiredEvidenceTypes": ["OBSERVABILITY"]
+    }
+  },
+  {
+    "caseId": "deployment-docker-compose-en",
+    "suite": "query-understanding",
+    "question": "How do I start the application with docker compose?",
+    "language": "en",
+    "projectKind": "devcontext",
+    "tags": ["deployment"],
+    "expected": {
+      "intent": "deployment_detail"
+    }
+  },
+  {
+    "caseId": "project-overview-en",
+    "suite": "query-understanding",
+    "question": "Tell me about the project",
+    "language": "en",
+    "projectKind": "devcontext",
+    "tags": ["overview"],
+    "expected": {
+      "intent": "project_overview"
+    }
+  },
+  {
+    "caseId": "cache-redis-lua-cn",
+    "suite": "query-understanding",
+    "question": "缓存和 redis-lua 库存扣减逻辑在哪里？",
+    "language": "zh-CN",
+    "projectKind": "generic",
+    "tags": ["cache"],
+    "expected": {
+      "intent": "cache_detail",
+      "requiredEvidenceTypes": ["CACHE"]
+    }
+  },
+  {
+    "caseId": "message-queue-rocketmq-cn",
+    "suite": "query-understanding",
+    "question": "RocketMQ consumer 和 producer 的消息队列实现在哪里？",
+    "language": "zh-CN",
+    "projectKind": "generic",
+    "tags": ["queue"],
+    "expected": {
+      "intent": "message_queue_detail",
+      "requiredEvidenceTypes": ["QUEUE"]
+    }
+  },
+  {
+    "caseId": "security-auth-token-cn",
+    "suite": "query-understanding",
+    "question": "auth token 和 JWT 鉴权安全逻辑怎么实现？",
+    "language": "zh-CN",
+    "projectKind": "generic",
+    "tags": ["security"],
+    "expected": {
+      "intent": "security_detail",
+      "requiredEvidenceTypes": ["SECURITY"]
+    }
+  },
+  {
+    "caseId": "performance-benchmark-p95-cn",
+    "suite": "query-understanding",
+    "question": "benchmark 里的 p95 latency 和 throughput 结果怎么看？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["benchmark", "performance"],
+    "expected": {
+      "intent": "performance_result",
+      "requiredEvidenceTypes": ["BENCHMARK"]
+    }
+  },
+  {
+    "caseId": "test-strategy-cn",
+    "suite": "query-understanding",
+    "question": "这个功能的测试策略和 JUnit 单测怎么写？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["test"],
+    "expected": {
+      "intent": "test_strategy",
+      "requiredEvidenceTypes": ["TEST"]
+    }
+  },
+  {
+    "caseId": "project-graph-neighbors-source-cn",
+    "suite": "query-understanding",
+    "question": "ProjectGraph neighbors API 的核心源码在哪里？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["implementation", "graph"],
+    "expected": {
+      "intent": "implementation_detail",
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "review-memory-signal-service-en",
+    "suite": "query-understanding",
+    "question": "How does ReviewMemorySignalService load feedback for later reviews?",
+    "language": "en",
+    "projectKind": "devcontext",
+    "tags": ["review"],
+    "expected": {
+      "intent": "review_context_detail",
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "application-yml-provider-config-cn",
+    "suite": "query-understanding",
+    "question": "provider 配置在 application.yml 和 settings 里怎么生效？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["config"],
+    "expected": {
+      "intent": "configuration_detail",
+      "requiredEvidenceTypes": ["CONFIG"]
+    }
+  },
+  {
+    "caseId": "knowledge-rag-citation-guard-cn",
+    "suite": "query-understanding",
+    "question": "Knowledge RAG citation answer guard 的实现源码在哪里？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["rag", "guard"],
+    "expected": {
+      "intent": "implementation_detail",
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "controlled-deep-scan-cn",
+    "suite": "query-understanding",
+    "question": "controlled deep scan 是怎么补查候选源码的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["deep-scan"],
+    "expected": {
+      "intent": "knowledge_rag_detail",
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "read-only-context-provider-cn",
+    "suite": "query-understanding",
+    "question": "ReadOnlyContextProvider 的沙箱读取怎么实现？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["provider"],
+    "expected": {
+      "intent": "implementation_detail",
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "knowledge-source-index-coverage-cn",
+    "suite": "query-understanding",
+    "question": "knowledge source index 后 evidence coverage report 是在哪里生成的？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["coverage", "index"],
+    "expected": {
+      "intent": "implementation_detail",
+      "forbiddenIntents": ["test_strategy"],
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "review-report-postprocessor-cn",
+    "suite": "query-understanding",
+    "question": "ReviewReportPostProcessor 怎么根据反馈过滤 review issue？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["review"],
+    "expected": {
+      "intent": "review_context_detail",
+      "requiredEvidenceTypes": ["SERVICE_CODE"]
+    }
+  },
+  {
+    "caseId": "llm-settings-test-endpoint-cn",
+    "suite": "query-understanding",
+    "question": "settings test endpoint 怎么检查 LLM provider 连接？",
+    "language": "zh-CN",
+    "projectKind": "devcontext",
+    "tags": ["llm", "settings"],
+    "expected": {
+      "intent": "configuration_detail",
+      "requiredEvidenceTypes": ["CONFIG"]
+    }
+  }
+]
