@@ -429,12 +429,16 @@ public class SourceEvidenceLoopProbe {
             camelCaseNames.add("ProjectEvidenceCoverage");
             camelCaseNames.add("ProjectEvidenceCoverageSummary");
             camelCaseNames.add("ProjectContextController");
-            camelCaseNames.add("ProjectEvidenceCatalogApplicationService");
             if (normalizedQuestion.contains("knowledge") || normalizedQuestion.contains("source index") || normalizedQuestion.contains("index")) {
                 camelCaseNames.add("KnowledgeCoverageService");
                 camelCaseNames.add("KnowledgeIndexApplicationService");
                 camelCaseNames.add("KnowledgeIndexResult");
                 camelCaseNames.add("KnowledgeController");
+            } else {
+                camelCaseNames.add("ProjectEvidenceCatalogApplicationService");
+                camelCaseNames.add("ProjectEvidenceCatalogTests");
+                fileOrPathFragments.add("project-evidence-catalog");
+                fileOrPathFragments.add("projectevidencecatalog");
             }
             if (englishKeywords.contains("project")) {
                 camelCaseNames.add("ProjectEvidenceCoverage");
@@ -460,8 +464,6 @@ public class SourceEvidenceLoopProbe {
             camelCaseNames.add("QueryPlan");
             camelCaseNames.add("KnowledgeQueryPlan");
             camelCaseNames.add("KnowledgeQueryPlanner");
-            camelCaseNames.add("QueryPlanTraceFormatter");
-            camelCaseNames.add("KnowledgeQueryPlanTraceFormatter");
             fileOrPathFragments.add("queryplan");
             fileOrPathFragments.add("query-plan");
             domainIntents.add("service");
@@ -475,6 +477,24 @@ public class SourceEvidenceLoopProbe {
             camelCaseNames.add("RequiredEvidence");
             fileOrPathFragments.add("requiredevidence");
             fileOrPathFragments.add("required-evidence");
+        }
+        boolean sourceEvidenceLoop = normalizedQuestion.contains("source evidence loop")
+                || normalizedQuestion.contains("sourceevidenceloop")
+                || normalizedQuestion.contains("evidence pack");
+        if (sourceEvidenceLoop) {
+            englishKeywords.add("source");
+            englishKeywords.add("evidence");
+            englishKeywords.add("loop");
+            englishKeywords.add("pack");
+            simpleNames.add("source");
+            simpleNames.add("evidence");
+            simpleNames.add("loop");
+            simpleNames.add("pack");
+            camelCaseNames.add("SourceEvidenceLoop");
+            camelCaseNames.add("EvidencePack");
+            fileOrPathFragments.add("source-evidence-loop");
+            fileOrPathFragments.add("sourceevidenceloop");
+            domainIntents.add("service");
         }
     }
 
@@ -840,6 +860,8 @@ public class SourceEvidenceLoopProbe {
         LinkedHashSet<String> groupSeen = new LinkedHashSet<>();
         for (CandidateSpec spec : group.candidates()) {
             List<DiscoveredPath> discoveredPaths = new ArrayList<>();
+            discoveredPaths.addAll(testCompanionPathCandidates(spec, queryFocus, corpus));
+            discoveredPaths.addAll(exactFocusPathCandidates(spec, queryFocus, corpus));
             discoveredPaths.addAll(sourceRepoMapCandidates(spec, queryFocus, corpus));
             if (includeProviderSearch) {
                 discoveredPaths.addAll(readOnlyProviderSearchCandidates(root, spec, queryFocus));
@@ -871,7 +893,7 @@ public class SourceEvidenceLoopProbe {
                         result.size() + 1
                 );
                 if (seenCandidates.add(candidateKey(candidate))) {
-                    result.add(new CandidatePlan(candidate, spec.markers(), discoveryTerms(spec, queryFocus)));
+                    result.add(new CandidatePlan(candidate, evidenceMarkers(spec, queryFocus), discoveryTerms(spec, queryFocus)));
                     addedForSpec++;
                 }
                 if (result.size() >= MAX_DISCOVERY_CANDIDATES_PER_GROUP) {
@@ -883,6 +905,126 @@ public class SourceEvidenceLoopProbe {
             }
         }
         return result;
+    }
+
+    private List<DiscoveredPath> testCompanionPathCandidates(
+            CandidateSpec spec,
+            QueryFocus queryFocus,
+            DiscoveryCorpus corpus
+    ) {
+        if (queryFocus == null
+                || corpus == null
+                || !("test_or_contract".equals(spec.evidenceGroup())
+                || "test_or_smoke".equals(spec.evidenceGroup())
+                || "test_endpoint".equals(spec.evidenceGroup()))
+                || !queryNeedsTestEvidence(queryFocus)) {
+            return List.of();
+        }
+        List<DiscoveredPath> result = new ArrayList<>();
+        for (CorpusFile file : corpus.files()) {
+            String path = normalize(file.relativePath());
+            if (!isTestPath(path) || queryExplicitlyRejectsPath(path, queryFocus)) {
+                continue;
+            }
+            double score = explicitTestCompanionBoost(path, spec.evidenceGroup(), queryFocus);
+            if (score > 0.0 && coversCandidateRole(file.relativePath(), spec)) {
+                result.add(new DiscoveredPath(file.relativePath(), 40_000.0 + score, "explicit_test_companion"));
+            }
+        }
+        return result;
+    }
+
+    private List<String> evidenceMarkers(CandidateSpec spec, QueryFocus queryFocus) {
+        LinkedHashSet<String> markers = new LinkedHashSet<>();
+        for (String term : querySpecificFocusTerms(queryFocus)) {
+            addDiscoveryTerm(markers, term);
+        }
+        if (queryPlanTarget(queryFocus)) {
+            addDiscoveryTerm(markers, "addRequiredEvidenceForIntent");
+            addDiscoveryTerm(markers, "requiredEvidenceTypes");
+            addDiscoveryTerm(markers, "new KnowledgeQueryPlan");
+            addDiscoveryTerm(markers, "required.stream().toList");
+        }
+        if (queryMentionsSourceEvidenceLoop(queryFocus)) {
+            addDiscoveryTerm(markers, "selectEvidencePack");
+            addDiscoveryTerm(markers, "SourceEvidenceLoopProbe");
+            addDiscoveryTerm(markers, "EvidencePack");
+        }
+        spec.markers().forEach(term -> addDiscoveryTerm(markers, term));
+        return markers.stream().toList();
+    }
+
+    private List<DiscoveredPath> exactFocusPathCandidates(
+            CandidateSpec spec,
+            QueryFocus queryFocus,
+            DiscoveryCorpus corpus
+    ) {
+        if (queryFocus == null || corpus == null) {
+            return List.of();
+        }
+        List<String> focusTerms = querySpecificFocusTerms(queryFocus).stream()
+                .map(this::compact)
+                .filter(term -> term.length() >= 10)
+                .distinct()
+                .toList();
+        if (focusTerms.isEmpty()) {
+            return List.of();
+        }
+        List<DiscoveredPath> result = new ArrayList<>();
+        for (CorpusFile file : corpus.files()) {
+            if (queryExplicitlyRejectsPath(normalize(file.relativePath()), queryFocus)) {
+                continue;
+            }
+            String compactPath = compact(file.relativePath());
+            double bestScore = 0.0;
+            for (String term : focusTerms) {
+                if (compactPath.contains(term)) {
+                    bestScore = Math.max(bestScore, 8_000.0 + term.length());
+                }
+            }
+            if (bestScore > 0.0 && coversCandidateRole(file.relativePath(), spec)) {
+                result.add(new DiscoveredPath(file.relativePath(), bestScore, "exact_focus_path"));
+            }
+        }
+        return result;
+    }
+
+    private boolean coversCandidateRole(String relativePath, CandidateSpec spec) {
+        String path = normalize(relativePath);
+        return switch (spec.evidenceGroup()) {
+            case "controller_entrypoint", "settings_controller" ->
+                    isJavaPath(path) && path.contains("controller");
+            case "application_service", "review_application_service", "feedback_memory_signal",
+                    "postprocessor_filtering", "local_config_store" ->
+                    isJavaPath(path) && !isTestPath(path)
+                            && (path.contains("service")
+                            || path.contains("adapter")
+                            || path.contains("provider")
+                            || path.contains("planner")
+                            || path.contains("probe")
+                            || path.contains("recorder")
+                            || path.contains("store")
+                            || path.contains("processor"));
+            case "test_endpoint" ->
+                    isJavaPath(path)
+                            && (isTestPath(path)
+                            || path.contains("controller")
+                            || path.contains("service"));
+            case "key_model_result", "review_issue_model", "entity_or_model" ->
+                    isJavaPath(path) && !isTestPath(path)
+                            && (path.contains("/domain/") || path.contains("/model/"));
+            case "test_or_contract", "test_or_smoke" ->
+                    isJavaPath(path) && isTestPath(path);
+            case "schema" -> path.endsWith(".sql");
+            case "migration_runner" ->
+                    isJavaPath(path) && !isTestPath(path)
+                            && (path.contains("migration") || path.contains("runner"));
+            case "repository_sql", "provider_client", "read_only_provider", "trace_recorder" ->
+                    isJavaPath(path) && !isTestPath(path);
+            case "properties" -> path.endsWith(".properties") || path.endsWith(".yml") || path.endsWith(".yaml");
+            default -> isJavaPath(path) || path.endsWith(".sql") || path.endsWith(".properties")
+                    || path.endsWith(".yml") || path.endsWith(".yaml");
+        };
     }
 
     private List<CandidatePlan> repositoryModelExpansionCandidates(
@@ -998,6 +1140,7 @@ public class SourceEvidenceLoopProbe {
             score += scoreContent(file.content(), spec, queryFocus);
             score += evidenceGroupPathBoost(relativePath, spec.evidenceGroup());
             score += querySpecificPathBoost(relativePath, spec.evidenceGroup(), queryFocus);
+            score += queryRolePathBoost(relativePath, spec.evidenceGroup(), queryFocus);
             if (isTestPath(relativePath) && !spec.evidenceGroup().startsWith("test_")) {
                 score -= 60.0;
             }
@@ -1293,28 +1436,54 @@ public class SourceEvidenceLoopProbe {
 
     private double querySpecificPathBoost(String relativePath, String evidenceGroup, QueryFocus queryFocus) {
         String path = normalize(relativePath);
-        String query = normalize(queryFocus == null ? "" : queryFocus.originalQuestion());
-        String compactQuery = compact(query);
-        if ("application_service".equals(evidenceGroup)
-                && path.endsWith("/knowledgecoverageservice.java")
-                && compactQuery.contains("knowledge")
-                && compactQuery.contains("coverage")) {
-            return 420.0;
+        if (!pathMatchesExplicitQueryFocus(path, queryFocus)) {
+            return 0.0;
         }
-        if ("controller_entrypoint".equals(evidenceGroup)
-                && path.endsWith("/knowledgecontroller.java")
-                && compactQuery.contains("knowledge")
-                && compactQuery.contains("coverage")) {
-            return 220.0;
+        return switch (evidenceGroup) {
+            case "controller_entrypoint", "settings_controller" ->
+                    path.contains("controller") && !isTestPath(path) ? 700.0 : -300.0;
+            case "application_service", "review_application_service", "feedback_memory_signal",
+                    "postprocessor_filtering", "local_config_store" ->
+                    !isTestPath(path) && containsAny(path, "service", "adapter", "provider", "store", "processor") ? 900.0 : -300.0;
+            case "key_model_result", "review_issue_model", "entity_or_model" ->
+                    !isTestPath(path) && !containsAny(path, "controller", "repository", "service", "adapter") ? 500.0 : -250.0;
+            case "test_or_contract", "test_or_smoke", "test_endpoint" ->
+                    isTestPath(path) ? 1_100.0 : -350.0;
+            case "properties" ->
+                    !isTestPath(path) && containsAny(path, "properties", "config") ? 600.0 : 0.0;
+            case "provider_client" ->
+                    !isTestPath(path) && containsAny(path, "client", "provider", "llm") ? 700.0 : -250.0;
+            default -> 0.0;
+        };
+    }
+
+    private boolean pathMatchesExplicitQueryFocus(String path, QueryFocus queryFocus) {
+        if (queryFocus == null) {
+            return false;
         }
-        if ("controller_entrypoint".equals(evidenceGroup)
-                && path.endsWith("/projectcontextcontroller.java")
-                && compactQuery.contains("evidence")
-                && compactQuery.contains("coverage")
-                && !compactQuery.contains("knowledge")) {
-            return 240.0;
+        String compactPath = compact(path);
+        for (String token : queryFocus.rawTokens()) {
+            if (token.length() <= 3 || !Character.isUpperCase(token.charAt(0)) || token.equals(token.toUpperCase(Locale.ROOT))) {
+                continue;
+            }
+            String compactToken = compact(token);
+            if (compactToken.length() >= 6 && compactPath.contains(compactToken)) {
+                return true;
+            }
         }
-        return 0.0;
+        for (String camelName : queryFocus.camelCaseNames()) {
+            String compactCamelName = compact(camelName);
+            if (compactCamelName.length() >= 6 && compactPath.contains(compactCamelName)) {
+                return true;
+            }
+        }
+        for (String fragment : queryFocus.fileOrPathFragments()) {
+            String compactFragment = compact(fragment);
+            if (compactFragment.length() >= 6 && compactPath.contains(compactFragment)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private double rolePathBoost(String normalizedPath, String role, double boost) {
@@ -1394,6 +1563,9 @@ public class SourceEvidenceLoopProbe {
         List<EvidenceFragment> compacted = new ArrayList<>();
         LinkedHashSet<String> selected = new LinkedHashSet<>();
         for (String group : contract.requiredEvidenceGroups()) {
+            if (skipPrimaryEvidenceGroup(contract.intent(), group, queryFocus)) {
+                continue;
+            }
             List<EvidenceFragment> groupFragments = byGroup.getOrDefault(group, List.of());
             if (groupFragments.isEmpty()) {
                 continue;
@@ -1424,28 +1596,63 @@ public class SourceEvidenceLoopProbe {
     private int primaryEvidenceLimit(String intent, String group, QueryFocus queryFocus) {
         if ("implementation_detail".equals(intent)
                 && "application_service".equals(group)
-                && multiServiceImplementationTarget(queryFocus)) {
-            return 2;
-        }
-        if ("implementation_detail".equals(intent)
-                && "key_model_result".equals(group)
-                && queryPlanTarget(queryFocus)) {
+                && (multiServiceImplementationTarget(queryFocus) || implementationTraceTarget(queryFocus))) {
             return 2;
         }
         if ("implementation_detail".equals(intent)
                 && "test_or_contract".equals(group)
                 && answerGuardTarget(queryFocus)) {
-            return 3;
+            return 1;
         }
         if ("review_context_detail".equals(intent)
                 && "test_or_smoke".equals(group)) {
-            return 2;
+            return 1;
         }
         if ("configuration_detail".equals(intent)
                 && "test_endpoint".equals(group)) {
-            return 2;
+            return 1;
         }
         return 1;
+    }
+
+    private boolean skipPrimaryEvidenceGroup(String intent, String group, QueryFocus queryFocus) {
+        if (!"implementation_detail".equals(intent)) {
+            return false;
+        }
+        return switch (group) {
+            case "controller_entrypoint" -> !queryNeedsControllerEvidence(queryFocus);
+            case "key_model_result" -> implementationTraceTarget(queryFocus) || !queryNeedsResultModelEvidence(queryFocus);
+            default -> false;
+        };
+    }
+
+    private boolean queryNeedsControllerEvidence(QueryFocus queryFocus) {
+        String question = normalize(queryFocus == null ? "" : queryFocus.originalQuestion());
+        String compactQuestion = compact(question);
+        return containsAny(question, "api", "endpoint", "controller", "entrypoint", "entry point", "route", "入口",
+                "上下文", "生成")
+                || compactQuestion.contains("contextgeneration")
+                || compactQuestion.contains("projectgraph");
+    }
+
+    private boolean queryNeedsResultModelEvidence(QueryFocus queryFocus) {
+        String question = normalize(queryFocus == null ? "" : queryFocus.originalQuestion());
+        String compactQuestion = compact(question);
+        return containsAny(question, "model", "result", "return", "response", "defined", "definition", "object",
+                "report", "summary", "trace", "返回", "对象", "模型", "定义", "上下文", "生成")
+                || compactQuestion.contains("queryplan")
+                || compactQuestion.contains("requiredevidence")
+                || compactQuestion.contains("contextgeneration")
+                || compactQuestion.contains("projectgraph")
+                || compactQuestion.contains("evidencecoverage");
+    }
+
+    private boolean queryNeedsTestEvidence(QueryFocus queryFocus) {
+        String question = normalize(queryFocus == null ? "" : queryFocus.originalQuestion());
+        String compactQuestion = compact(question);
+        return containsAny(question, "test", "tests", "contract", "smoke", "测试")
+                || compactQuestion.contains("contextgeneration")
+                || compactQuestion.contains("evidencecoverageapi");
     }
 
     private boolean multiServiceImplementationTarget(QueryFocus queryFocus) {
@@ -1511,6 +1718,7 @@ public class SourceEvidenceLoopProbe {
         score += queryMentionedTypeNameBoost(path, queryFocus);
         score += evidenceGroupPathBoost(path, group);
         score += querySpecificPathBoost(path, group, queryFocus);
+        score += queryRolePathBoost(path, group, queryFocus);
         score += primaryRoleBoost(intent, group, path, content, queryFocus);
 
         boolean testGroup = group.startsWith("test_") || "test_or_contract".equals(group);
@@ -1526,7 +1734,18 @@ public class SourceEvidenceLoopProbe {
         if (path.endsWith(".json") && !"properties".equals(group)) {
             score -= 300.0;
         }
+        if (manualOrRealLlmAcceptanceTestPath(path)) {
+            score -= 2_500.0;
+        }
         return score;
+    }
+
+    private boolean manualOrRealLlmAcceptanceTestPath(String path) {
+        String normalizedPath = normalize(path);
+        return isTestPath(normalizedPath)
+                && (normalizedPath.contains("realllm")
+                || normalizedPath.contains("manual")
+                || normalizedPath.contains("acceptance"));
     }
 
     private double queryMentionedTypeNameBoost(String path, QueryFocus queryFocus) {
@@ -1565,6 +1784,66 @@ public class SourceEvidenceLoopProbe {
         return score;
     }
 
+    private double queryRolePathBoost(String relativePath, String evidenceGroup, QueryFocus queryFocus) {
+        String path = normalize(relativePath);
+        double score = explicitTestCompanionBoost(path, evidenceGroup, queryFocus);
+        boolean testGroup = "test_or_contract".equals(evidenceGroup)
+                || "test_or_smoke".equals(evidenceGroup)
+                || "test_endpoint".equals(evidenceGroup);
+        if (testGroup && answerGuardTarget(queryFocus)) {
+            if (containsAny(path, "evidence", "evaluation", "guard")) {
+                score += 10_000.0;
+            } else if (path.contains("/v0") || path.contains("/v1") || path.contains("knowledge-rag")) {
+                score -= 5_000.0;
+            }
+        }
+        if ("application_service".equals(evidenceGroup)) {
+            if (queryMentionsSandbox(queryFocus) && containsAny(path, "sandbox", "sandboxed")) {
+                score += 4_500.0;
+            }
+            if (queryMentionsTrace(queryFocus) && containsAny(path, "trace", "recorder")) {
+                score += 3_500.0;
+            }
+            if ((queryMentionsSandbox(queryFocus) || queryMentionsTrace(queryFocus))
+                    && path.endsWith("provider.java")
+                    && !containsAny(path, "sandbox", "sandboxed", "trace", "recorder")) {
+                score -= 800.0;
+            }
+        }
+        if ("key_model_result".equals(evidenceGroup)
+                && implementationTraceTarget(queryFocus)
+                && path.endsWith("provider.java")
+                && !containsAny(path, "trace", "recorder", "result", "summary", "report")) {
+            score -= 4_000.0;
+        }
+        return score;
+    }
+
+    private double explicitTestCompanionBoost(String path, String evidenceGroup, QueryFocus queryFocus) {
+        if (queryFocus == null
+                || !("test_or_contract".equals(evidenceGroup)
+                || "test_or_smoke".equals(evidenceGroup)
+                || "test_endpoint".equals(evidenceGroup))
+                || !queryNeedsTestEvidence(queryFocus)
+                || !isTestPath(path)) {
+            return 0.0;
+        }
+        String compactFile = compact(fileName(path));
+        double score = 0.0;
+        for (String camelName : queryFocus.camelCaseNames()) {
+            String compactName = compact(camelName);
+            if (compactName.length() < 6) {
+                continue;
+            }
+            if (compactFile.contains(compactName + "test") || compactFile.contains(compactName + "tests")) {
+                score += 12_000.0;
+            } else if (compactFile.contains(compactName)) {
+                score += 4_000.0;
+            }
+        }
+        return score;
+    }
+
     private double primaryRoleBoost(
             String intent,
             String group,
@@ -1589,11 +1868,12 @@ public class SourceEvidenceLoopProbe {
                     + rolePathBoost(path, "queryplan", 520.0)
                     + rolePathBoost(path, "plan", 360.0)
                     + rolePathBoost(path, "neighborhood", 520.0)
-                    + rolePathBoost(path, "trace", 360.0)
-                    + rolePathBoost(path, "recorder", 4_000.0)
-                    + rolePathBoost(path, "agentrunreadonlycontexttracerecorder", 4_000.0)
+                    + rolePathBoost(path, "trace", 1_200.0)
+                    + rolePathBoost(path, "recorder", 5_600.0)
                     + (path.contains("/domain/") ? 320.0 : 0.0)
                     + (path.contains("/domain/knowledge/") ? 260.0 : 0.0)
+                    + (queryMentionsTrace(queryFocus) && path.contains("recorder") ? 4_000.0 : 0.0)
+                    - (queryMentionsTrace(queryFocus) && path.contains("/domain/") && !path.contains("recorder") ? 4_000.0 : 0.0)
                     - (containsAny(path, "controller", "repository", "planner") ? 350.0 : 0.0)
                     - (path.contains("formatter") ? 1_400.0 : 0.0)
                     - (path.endsWith("service.java") ? 260.0 : 0.0);
@@ -1603,8 +1883,11 @@ public class SourceEvidenceLoopProbe {
                     + rolePathBoost(path, "rag", 420.0)
                     + rolePathBoost(path, "evidence", 520.0)
                     + rolePathBoost(path, "evaluation", 1_400.0)
-                    + rolePathBoost(path, "ragevidenceevaluationtests", 2_000.0)
-                    + rolePathBoost(path, "answer", 260.0);
+                    + rolePathBoost(path, "answer", 260.0)
+                    + (answerGuardTarget(queryFocus) && path.contains("evaluation") ? 1_600.0 : 0.0)
+                    + (answerGuardTarget(queryFocus) && path.contains("evidence") ? 700.0 : 0.0)
+                    + (queryMentionsSourceEvidenceLoop(queryFocus) && path.contains("sourceevidenceloop") ? 20_000.0 : 0.0)
+                    - (queryMentionsSourceEvidenceLoop(queryFocus) && !path.contains("sourceevidenceloop") ? 10_000.0 : 0.0);
             case "schema" -> (path.endsWith("/schema.sql") ? 900.0 : 0.0)
                     + tableNameFocusBoost(path, content, queryFocus);
             case "repository_sql" -> rolePathBoost(path, "jdbc", 520.0)
@@ -1621,17 +1904,17 @@ public class SourceEvidenceLoopProbe {
             case "migration_runner" -> rolePathBoost(path, "migration", 520.0)
                     + rolePathBoost(path, "runner", 320.0)
                     + rolePathBoost(path, "schema", 220.0);
-            case "review_application_service" -> rolePathBoost(path, "reviewapplicationservice", 900.0)
-                    + rolePathBoost(path, "review", 260.0)
-                    + rolePathBoost(path, "service", 220.0)
+            case "review_application_service" -> rolePathBoost(path, "review", 520.0)
+                    + rolePathBoost(path, "application", 300.0)
+                    + rolePathBoost(path, "service", 360.0)
                     - (isTestPath(path) ? 500.0 : 0.0);
-            case "feedback_memory_signal" -> rolePathBoost(path, "reviewmemorysignalservice", 1_000.0)
-                    + rolePathBoost(path, "memorysignalservice", 850.0)
+            case "feedback_memory_signal" -> rolePathBoost(path, "memory", 520.0)
                     + rolePathBoost(path, "feedback", 260.0)
-                    + rolePathBoost(path, "signal", 220.0)
+                    + rolePathBoost(path, "signal", 420.0)
+                    + rolePathBoost(path, "service", 260.0)
                     - (isTestPath(path) ? 450.0 : 0.0);
-            case "postprocessor_filtering" -> rolePathBoost(path, "reviewreportpostprocessor", 1_000.0)
-                    + rolePathBoost(path, "postprocessor", 520.0)
+            case "postprocessor_filtering" -> rolePathBoost(path, "postprocessor", 760.0)
+                    + rolePathBoost(path, "processor", 360.0)
                     + rolePathBoost(path, "filter", 220.0)
                     - (isTestPath(path) ? 450.0 : 0.0);
             case "review_issue_model" -> (path.contains("/domain/") ? 500.0 : 0.0)
@@ -1644,29 +1927,38 @@ public class SourceEvidenceLoopProbe {
                     + rolePathBoost(path, "smoke", 420.0)
                     + rolePathBoost(path, "memorysignal", 260.0);
             case "properties" -> rolePathBoost(path, "properties", 2_200.0)
-                    + rolePathBoost(path, "devcontextllmproperties", 3_000.0)
+                    + rolePathBoost(path, "llm", 420.0)
+                    + (path.contains("/config/") ? 1_200.0 : 0.0)
+                    - (path.contains("/application/") ? 1_000.0 : 0.0)
+                    - (path.endsWith("service.java") ? 800.0 : 0.0)
                     + (path.contains("/config/") ? 240.0 : 0.0);
-            case "settings_controller" -> rolePathBoost(path, "llmsettingscontroller", 900.0)
+            case "settings_controller" -> rolePathBoost(path, "settings", 520.0)
+                    + rolePathBoost(path, "llm", 220.0)
                     + rolePathBoost(path, "controller", 420.0)
                     + (path.contains("/adapters/web/") ? 180.0 : 0.0);
-            case "local_config_store" -> rolePathBoost(path, "localllmsettingsstore", 900.0)
+            case "local_config_store" -> rolePathBoost(path, "local", 360.0)
+                    + rolePathBoost(path, "llm", 220.0)
                     + rolePathBoost(path, "store", 420.0)
                     + rolePathBoost(path, "settings", 180.0);
-            case "provider_client" -> rolePathBoost(path, "deepseekllmclient", 3_000.0)
-                    + rolePathBoost(path, "client", 1_600.0)
-                    + rolePathBoost(path, "provider", 180.0)
-                    + (path.contains("/adapters/llm/") ? 700.0 : 0.0)
+            case "provider_client" -> rolePathBoost(path, "client", 1_600.0)
+                    + rolePathBoost(path, "provider", 420.0)
+                    + rolePathBoost(path, "llm", 420.0)
+                    + (path.contains("/adapters/llm/") ? 2_200.0 : 0.0)
+                    + (path.endsWith("client.java") ? 1_000.0 : 0.0)
+                    - (path.contains("/application/") ? 1_400.0 : 0.0)
+                    - (path.endsWith("service.java") ? 1_200.0 : 0.0)
                     - (path.contains("mock") || path.contains("unsupported") ? 700.0 : 0.0)
                     - (isTestPath(path) ? 450.0 : 0.0);
-            case "test_endpoint" -> (!isTestPath(path) ? 900.0 : -250.0)
-                    + rolePathBoost(path, "llmconnectioncheckapplicationservice", 1_600.0)
+            case "test_endpoint" -> (isTestPath(path) ? 1_200.0 : 120.0)
+                    + rolePathBoost(path, "tests", 900.0)
+                    + rolePathBoost(path, "test", 520.0)
                     + rolePathBoost(path, "connectioncheck", 700.0)
                     + rolePathBoost(path, "testconnection", 520.0)
-                    + rolePathBoost(path, "service", 340.0)
+                    + rolePathBoost(path, "service", 120.0)
                     + rolePathBoost(path, "controller", 260.0)
-                    + (path.contains("/application/") ? 360.0 : 0.0)
+                    + (path.contains("/application/") ? 80.0 : 0.0)
                     + (path.contains("/adapters/web/") ? 220.0 : 0.0)
-                    + (isTestPath(path) ? rolePathBoost(path, "llmsettingscontrollertests", 120.0) : 0.0);
+                    + (isTestPath(path) ? 280.0 : 0.0);
             default -> 0.0;
         };
         if (!"implementation_detail".equals(intent) && "application_service".equals(group)) {
@@ -1688,6 +1980,27 @@ public class SourceEvidenceLoopProbe {
             }
         }
         return score;
+    }
+
+    private boolean queryMentionsTrace(QueryFocus queryFocus) {
+        return queryFocus != null && compact(queryFocus.originalQuestion()).contains("trace");
+    }
+
+    private boolean queryMentionsSandbox(QueryFocus queryFocus) {
+        if (queryFocus == null) {
+            return false;
+        }
+        String question = queryFocus.originalQuestion() == null ? "" : queryFocus.originalQuestion();
+        String compactQuestion = compact(question);
+        return compactQuestion.contains("sandbox")
+                || compactQuestion.contains("sandboxed")
+                || question.contains("\u6c99\u7bb1");
+    }
+
+    private boolean implementationTraceTarget(QueryFocus queryFocus) {
+        return queryMentionsTrace(queryFocus) && (queryMentionsSandbox(queryFocus)
+                || queryFocus.camelCaseNames().stream().map(this::compact).anyMatch(name -> name.endsWith("provider"))
+                || compact(queryFocus.originalQuestion()).contains("implementation"));
     }
 
     private LinkedHashMap<String, String> evaluateSufficiency(EvidenceContract contract, QueryFocus queryFocus, List<EvidenceFragment> evidencePack) {
@@ -1752,8 +2065,10 @@ public class SourceEvidenceLoopProbe {
             case "application_service" -> isJavaPath(path)
                     && !isTestPath(path)
                     && fileNameSpecificFocusRelevant
-                    && hasServiceRole(path, content)
-                    && containsAny(content, "public ", "context", "generate", "implementation", "return ");
+                    && (!implementationTraceTarget(queryFocus) || !content.contains("interface "))
+                    && hasImplementationRole(path, content, queryFocus)
+                    && (containsAny(content, "public ", "context", "generate", "implementation", "return ")
+                    || (queryMentionsSourceEvidenceLoop(queryFocus) && path.endsWith("/sourceevidenceloopprobe.java")));
             case "key_model_result" -> isJavaPath(path)
                     && !isTestPath(path)
                     && !containsAny(path, "controller", "service", "repository", "adapter", "planner")
@@ -1763,6 +2078,7 @@ public class SourceEvidenceLoopProbe {
                     "neighborhood", "trace", "recorder", "provider"))
                     && containsAny(content, "record ", "class ", "interface ");
             case "test_or_contract" -> isTestPath(path)
+                    && (!hasExplicitClassFocus(queryFocus) || pathMatchesExplicitClassOrTestCompanion(path, queryFocus))
                     && specificFocusRelevant
                     && containsAny(content, "@test", "assertthat", "mockmvc", "assert");
             case "schema" -> path.endsWith(".sql")
@@ -1798,6 +2114,7 @@ public class SourceEvidenceLoopProbe {
             case "test_or_smoke" -> isTestPath(path)
                     && containsAny(content, "@test", "assertthat", "false_positive", "feedback", "review");
             case "properties" -> isJavaPath(path)
+                    && (path.contains("/config/") || content.contains("configurationproperties"))
                     && containsAny(path + "\n" + content, "properties", "config")
                     && containsAny(content, "configurationproperties", "apikey", "api-key", "timeout", "provider", "model");
             case "settings_controller" -> isJavaPath(path)
@@ -1807,6 +2124,7 @@ public class SourceEvidenceLoopProbe {
                     && containsAny(path + "\n" + content, "store", "config", "settings")
                     && containsAny(content, "save", "load", "read", "write", "api-key", "apikey");
             case "provider_client" -> isJavaPath(path)
+                    && (path.contains("/adapters/llm/") || path.endsWith("client.java"))
                     && containsAny(path + "\n" + content, "client", "provider", "llm")
                     && containsAny(content, "timeout", "apikey", "api-key", "authorization", "model");
             case "test_endpoint" -> isJavaPath(path)
@@ -1829,6 +2147,39 @@ public class SourceEvidenceLoopProbe {
             return hasQueryFocusHit(path, content, queryFocus);
         }
         return containsNormalizedOrCompact(path + "\n" + content, terms);
+    }
+
+    private boolean hasExplicitClassFocus(QueryFocus queryFocus) {
+        if (queryFocus == null) {
+            return false;
+        }
+        return queryFocus.rawTokens().stream().anyMatch(this::looksLikeExplicitClassName);
+    }
+
+    private boolean pathMatchesExplicitClassOrTestCompanion(String path, QueryFocus queryFocus) {
+        if (queryFocus == null) {
+            return false;
+        }
+        String compactFile = compact(fileName(path));
+        for (String token : queryFocus.rawTokens()) {
+            if (!looksLikeExplicitClassName(token)) {
+                continue;
+            }
+            String compactToken = compact(token);
+            if (compactFile.contains(compactToken)
+                    || compactFile.contains(compactToken + "test")
+                    || compactFile.contains(compactToken + "tests")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean looksLikeExplicitClassName(String token) {
+        return token != null
+                && token.length() > 3
+                && Character.isUpperCase(token.charAt(0))
+                && !token.equals(token.toUpperCase(Locale.ROOT));
     }
 
     private boolean containsNormalizedOrCompact(String haystack, List<String> terms) {
@@ -1966,6 +2317,15 @@ public class SourceEvidenceLoopProbe {
         return normalizedPath.endsWith("service.java")
                 || normalizedPath.contains("/service/")
                 || content.contains("@service");
+    }
+
+    private boolean hasImplementationRole(String path, String content, QueryFocus queryFocus) {
+        String normalizedPath = normalize(path);
+        return hasServiceRole(normalizedPath, content)
+                || (normalizedPath.contains("/application/")
+                && containsAny(normalizedPath, "adapter", "planner", "probe", "provider", "processor", "recorder", "store"))
+                || (queryMentionsSourceEvidenceLoop(queryFocus)
+                && normalizedPath.endsWith("/sourceevidenceloopprobe.java"));
     }
 
     private LinkedHashMap<String, String> initialGroupStatus(EvidenceContract contract) {

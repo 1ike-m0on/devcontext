@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("query-understanding", "evidence-pack", "boundary", "cross-language", "external-aider-polyglot", "external-repobench", "external-multi-swe-bench", "external-swe-bench-lite", "external-defects4j", "all")]
+    [ValidateSet("query-understanding", "evidence-pack", "evidence-pack-pending", "boundary", "cross-language", "external-aider-polyglot", "external-repobench", "external-multi-swe-bench", "external-swe-bench-lite", "external-defects4j", "all")]
     [string]$Suite = "query-understanding",
     [int]$CaseLimit = 0,
     [string]$Keywords = "",

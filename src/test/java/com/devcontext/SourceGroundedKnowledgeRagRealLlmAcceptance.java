@@ -127,7 +127,7 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
         KnowledgeIndexResult indexResult = indexService.indexSource(source.id());
 
         List<CaseResult> results = new ArrayList<>();
-        for (AcceptanceCase acceptanceCase : acceptanceCases()) {
+        for (AcceptanceCase acceptanceCase : selectedAcceptanceCases()) {
             results.add(runCase(source.id(), acceptanceCase));
         }
 
@@ -370,6 +370,10 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
     ) throws IOException {
         Instant generatedAt = Instant.now();
         String runId = "source-grounded-knowledge-rag-sel-real-llm-" + RUN_ID_FORMAT.format(generatedAt);
+        String runName = configuredRunName();
+        if (hasText(runName)) {
+            runId = runId + "--" + runName;
+        }
         Path reportDir = Path.of("target", "source-grounded-knowledge-rag-real-llm");
         Files.createDirectories(reportDir);
         Path jsonPath = reportDir.resolve(runId + ".json");
@@ -384,6 +388,8 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
         payload.put("provider", provider());
         payload.put("model", model());
         payload.put("timeout", timeout());
+        payload.put("caseFilter", configuredCaseFilter());
+        payload.put("caseLimit", configuredCaseLimit());
         payload.put("status", status);
         payload.put("message", message);
         payload.put("caseCount", results.size());
@@ -503,7 +509,7 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
                                 "src/main/java/com/devcontext/adapters/web/ProjectContextController.java",
                                 "src/main/java/com/devcontext/application/evidence/ProjectEvidenceCatalogApplicationService.java",
                                 "src/main/java/com/devcontext/domain/evidence/ProjectEvidenceCoverageSummary.java",
-                                "src/test/java/com/devcontext/SourceGroundedKnowledgeRagTests.java"
+                                "src/test/java/com/devcontext/ProjectEvidenceCatalogTests.java"
                         ),
                         List.of("ProjectContextController", "ProjectEvidenceCatalogApplicationService", "ProjectEvidenceCoverageSummary"),
                         false
@@ -610,6 +616,72 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
                         false
                 )
         );
+    }
+
+    private List<AcceptanceCase> selectedAcceptanceCases() {
+        List<AcceptanceCase> cases = acceptanceCases();
+        String filter = configuredCaseFilter();
+        if (hasText(filter)) {
+            List<String> needles = List.of(filter.split(",")).stream()
+                    .map(String::trim)
+                    .filter(this::hasText)
+                    .map(this::normalize)
+                    .toList();
+            cases = cases.stream()
+                    .filter(acceptanceCase -> matchesAnyFilter(acceptanceCase, needles))
+                    .toList();
+        }
+
+        int limit = configuredCaseLimit();
+        if (limit > 0 && cases.size() > limit) {
+            cases = cases.subList(0, limit);
+        }
+
+        if (cases.isEmpty()) {
+            throw new IllegalArgumentException("No real LLM acceptance cases matched caseFilter=" + filter);
+        }
+        return List.copyOf(cases);
+    }
+
+    private boolean matchesAnyFilter(AcceptanceCase acceptanceCase, List<String> needles) {
+        if (needles.isEmpty()) {
+            return true;
+        }
+        List<String> haystacks = new ArrayList<>();
+        haystacks.add(acceptanceCase.id());
+        haystacks.add(acceptanceCase.question());
+        haystacks.add(acceptanceCase.expectedIntent());
+        haystacks.addAll(acceptanceCase.expectedEvidenceGroups());
+        haystacks.addAll(acceptanceCase.requiredSelectedPaths());
+        return needles.stream().anyMatch(needle -> haystacks.stream()
+                .map(this::normalize)
+                .anyMatch(haystack -> haystack.contains(needle)));
+    }
+
+    private String configuredCaseFilter() {
+        return safeText(System.getProperty("devcontext.realLlmAcceptance.caseFilter"));
+    }
+
+    private int configuredCaseLimit() {
+        String value = System.getProperty("devcontext.realLlmAcceptance.caseLimit");
+        if (!hasText(value)) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(value.trim()));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid devcontext.realLlmAcceptance.caseLimit=" + value, e);
+        }
+    }
+
+    private String configuredRunName() {
+        String value = safeText(System.getProperty("devcontext.realLlmAcceptance.runName"));
+        if (!hasText(value)) {
+            return "";
+        }
+        return value.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9._-]+", "-")
+                .replaceAll("^-+|-+$", "");
     }
 
     private List<String> citationPaths(List<KnowledgeSearchResult> citations) {

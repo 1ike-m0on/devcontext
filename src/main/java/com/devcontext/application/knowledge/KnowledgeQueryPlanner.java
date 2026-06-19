@@ -514,7 +514,8 @@ public class KnowledgeQueryPlanner {
             return false;
         }
         if (implementationTarget(normalizedQuery, rawTokens, tokens)
-                && matches(rawTokens, "controller", "service", "model", "repository", "route", "api", "entry")) {
+                && matches(rawTokens, "controller", "service", "model", "repository", "route", "api", "entry",
+                "source", "adapter", "probe", "core", "class", "classes", "provider")) {
             return false;
         }
         return matches(rawTokens, "where", "implemented", "coverage", "strategy")
@@ -567,10 +568,12 @@ public class KnowledgeQueryPlanner {
         }
         if ("test_strategy".equals(currentIntent)) {
             if (matches(rawTokens, "test", "tests")
-                    && !matches(rawTokens, "controller", "model", "route", "api", "entry", "entrypoint", "graph")) {
+                    && !matches(rawTokens, "controller", "model", "route", "api", "entry", "entrypoint", "graph",
+                    "source", "adapter", "probe", "core", "class", "classes", "provider")) {
                 return false;
             }
-            return matches(rawTokens, "controller", "model", "route", "api", "entry", "entrypoint", "graph")
+            return matches(rawTokens, "controller", "model", "route", "api", "entry", "entrypoint", "graph",
+                    "source", "adapter", "probe", "core", "class", "classes", "provider")
                     || evidenceCoverageTarget(normalizedQuery, rawTokens, tokens);
         }
         if ("configuration_detail".equals(currentIntent)) {
@@ -617,7 +620,8 @@ public class KnowledgeQueryPlanner {
             return false;
         }
         return !matches(rawTokens, "controller", "service", "model", "repository", "route", "api", "entry",
-                "entrypoint", "graph", "context", "answer", "guard", "provider", "client");
+                "entrypoint", "graph", "context", "answer", "guard", "provider", "client",
+                "source", "adapter", "probe", "core", "class", "classes");
     }
 
     private boolean matchesText(String value, String... terms) {
