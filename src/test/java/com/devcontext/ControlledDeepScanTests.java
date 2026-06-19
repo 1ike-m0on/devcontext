@@ -54,7 +54,7 @@ class ControlledDeepScanTests {
     private Path projectRoot;
 
     @Test
-    void partialEvidenceTriggersDeepScanAndAddsPrimarySourceEvidence() throws Exception {
+    void implementationQuestionUsesSourceEvidenceLoopPrimaryEvidence() throws Exception {
         writeGeneratedImplementationSummary();
         String serviceFile = "src/main/java/com/acme/order/OrderService.java";
         writeProjectFile(serviceFile, """
@@ -94,7 +94,7 @@ class ControlledDeepScanTests {
 
         JsonNode askJson = ask(sourceId, "How is the OrderService implementation structured?");
 
-        assertThat(askJson.path("answer").asText()).contains("controlled deep scan").contains("[S");
+        assertThat(askJson.path("answer").asText()).contains("source evidence pack").contains("[S");
         assertThat(askJson.path("evidenceEvaluation").path("answerGuardDecision").asText()).isEqualTo("supported");
         assertThat(askJson.path("evidenceEvaluation").path("sufficient").asBoolean()).isTrue();
         assertThat(askJson.path("evidenceEvaluation").path("matchedPreferredEvidenceTypes"))
@@ -102,10 +102,15 @@ class ControlledDeepScanTests {
         assertThat(askJson.path("citations"))
                 .anySatisfy(citation -> {
                     assertThat(citation.path("filePath").asText()).isEqualTo(serviceFile);
+                    assertThat(citation.path("sourceName").asText()).isEqualTo("source-evidence-loop");
+                    assertThat(citation.path("chunkId").isNull()).isTrue();
+                    assertThat(citation.path("documentId").isNull()).isTrue();
                     assertThat(citation.path("evidenceTypes"))
                             .anySatisfy(type -> assertThat(type.asText()).isEqualTo("SERVICE_CODE"));
                     assertThat(citation.path("scoreReasons"))
-                            .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("controlled_deep_scan"));
+                            .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("source_evidence_loop"))
+                            .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("evidence_pack_only"))
+                            .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("primary_source_only"));
                 });
         assertThat(llmClient.callCount()).isEqualTo(1);
 
@@ -113,17 +118,20 @@ class ControlledDeepScanTests {
         assertThat(events)
                 .extracting(event -> event.path("eventType").asText())
                 .contains(
-                        "KNOWLEDGE_DEEP_SCAN_STARTED",
-                        "KNOWLEDGE_DEEP_SCAN_FINISHED",
-                        "KNOWLEDGE_DEEP_SCAN_EVIDENCE_EVALUATED",
-                        "READ_ONLY_CONTEXT_PROVIDER_STARTED",
-                        "READ_ONLY_CONTEXT_PROVIDER_FINISHED",
+                        "KNOWLEDGE_SOURCE_EVIDENCE_LOOP_STARTED",
+                        "KNOWLEDGE_SOURCE_EVIDENCE_LOOP_SUPPORTED",
                         "KNOWLEDGE_ANSWER_GUARD_APPLIED",
                         "LLM_CALLED"
+                )
+                .doesNotContain(
+                        "KNOWLEDGE_DEEP_SCAN_STARTED",
+                        "KNOWLEDGE_DEEP_SCAN_FINISHED",
+                        "KNOWLEDGE_DEEP_SCAN_EVIDENCE_EVALUATED"
                 );
-        assertThat(eventOutput(events, "KNOWLEDGE_DEEP_SCAN_FINISHED"))
-                .contains("budgetLimited=false")
-                .contains("evidenceCandidates=1");
+        assertThat(eventOutput(events, "KNOWLEDGE_SOURCE_EVIDENCE_LOOP_SUPPORTED"))
+                .contains("fallbackToLegacyRetrieval=false")
+                .contains("evidencePackOnly=true")
+                .contains("primarySourceOnly=true");
     }
 
     @Test
@@ -154,7 +162,7 @@ class ControlledDeepScanTests {
     }
 
     @Test
-    void deepScanStopsAtLineBudgetAndRecordsBudgetLimitedTrace() throws Exception {
+    void implementationQuestionUsesSourceEvidenceLoopInsteadOfBudgetedDeepScan() throws Exception {
         writeGeneratedImplementationSummary();
         String serviceFile = "src/main/java/com/acme/order/BudgetedOrderService.java";
         writeProjectFile(serviceFile, largeServiceSource());
@@ -174,9 +182,16 @@ class ControlledDeepScanTests {
         assertThat(llmClient.callCount()).isEqualTo(1);
 
         JsonNode events = runEvents(askJson.path("runId").asLong());
-        assertThat(eventOutput(events, "KNOWLEDGE_DEEP_SCAN_FINISHED"))
-                .contains("budgetLimited=true")
-                .contains("charsRead=12000");
+        assertThat(events)
+                .extracting(event -> event.path("eventType").asText())
+                .contains("KNOWLEDGE_SOURCE_EVIDENCE_LOOP_SUPPORTED")
+                .doesNotContain("KNOWLEDGE_DEEP_SCAN_STARTED", "KNOWLEDGE_DEEP_SCAN_FINISHED");
+        assertThat(askJson.path("citations"))
+                .anySatisfy(citation -> {
+                    assertThat(citation.path("filePath").asText()).isEqualTo(serviceFile);
+                    assertThat(citation.path("scoreReasons"))
+                            .anySatisfy(reason -> assertThat(reason.asText()).isEqualTo("source_evidence_loop"));
+                });
     }
 
     private void writeGeneratedImplementationSummary() throws Exception {
@@ -287,7 +302,7 @@ class ControlledDeepScanTests {
         public LlmResponse chat(LlmRequest request) {
             callCount.incrementAndGet();
             return new LlmResponse(
-                    "The implementation is grounded in source evidence found by the controlled deep scan. [S2]",
+                    "The implementation is grounded in the selected source evidence pack. [S1]",
                     request.modelName(),
                     160,
                     28

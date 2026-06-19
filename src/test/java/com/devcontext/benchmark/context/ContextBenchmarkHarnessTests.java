@@ -80,9 +80,11 @@ class ContextBenchmarkHarnessTests {
                 .toList();
 
         assertThat(activeCaseIds)
-                .doesNotContain("evidence-coverage-api-source-pack", "source-evidence-loop-source-pack");
+                .doesNotContain("evidence-coverage-api-source-pack")
+                .contains("source-evidence-loop-source-pack");
         assertThat(pendingCaseIds)
-                .contains("evidence-coverage-api-source-pack", "source-evidence-loop-source-pack");
+                .contains("evidence-coverage-api-source-pack")
+                .doesNotContain("source-evidence-loop-source-pack");
     }
 
     private void assertSummaryCanBeRecomputedFromCaseJson(Path runDir, JsonNode summary) throws Exception {

@@ -37,7 +37,7 @@
         "src/main/java/**/ProjectContextController.java",
         "src/main/java/**/ProjectEvidenceCatalogApplicationService.java",
         "src/main/java/**/ProjectEvidenceCoverageSummary.java",
-        "src/test/java/**/SourceGroundedKnowledgeRagTests.java"
+        "src/test/java/**/ProjectEvidenceCatalogTests.java"
       ],
       "forbiddenSourcePathPatterns": ["docs/**", ".ai/**", "README*"],
       "maxProductEvidenceCount": 8,
@@ -179,8 +179,7 @@
     "language": "zh-CN",
     "projectKind": "devcontext",
     "projectRoot": "devcontext",
-    "sourceCapability": "pending-product-context",
-    "tags": ["positive", "source-evidence-loop", "pending", "future-product-context"],
+    "tags": ["positive", "source-evidence-loop", "source-selection"],
     "expected": {
       "intent": "implementation_detail",
       "sourcePathPatterns": [
