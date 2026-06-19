@@ -286,12 +286,13 @@ public class KnowledgeQueryPlanner {
         }
         addRequiredEvidenceForIntent(intent, required);
 
-        String noAnswerPolicy = required.isEmpty()
-                ? "require_retrieved_context"
-                : "require_specific_evidence";
-        String fallbackStrategy = required.isEmpty()
-                ? "retrieve_preferred_then_allow_partial_answer"
-                : "require_specific_evidence_or_no_answer";
+        boolean hardSpecificEvidenceFallback = "performance_result".equals(intent);
+        String noAnswerPolicy = hardSpecificEvidenceFallback
+                ? "require_specific_evidence"
+                : "require_retrieved_context";
+        String fallbackStrategy = hardSpecificEvidenceFallback
+                ? "require_specific_evidence_or_no_answer"
+                : "retrieve_preferred_then_allow_partial_answer";
         return new KnowledgeQueryPlan(
                 normalizedQuery,
                 rewrittenQuery,
