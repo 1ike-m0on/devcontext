@@ -1,0 +1,13 @@
+{
+  "files": {
+    "solution": [
+      "src/formatter.js"
+    ],
+    "test": [
+      "test/formatter.test.js"
+    ],
+    "example": [
+      "examples/formatter-example.js"
+    ]
+  }
+}

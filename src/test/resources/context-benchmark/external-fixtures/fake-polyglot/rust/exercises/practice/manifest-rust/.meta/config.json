@@ -1,0 +1,14 @@
+{
+  "files": {
+    "solution": [
+      "src/lib.rs",
+      "Cargo.toml"
+    ],
+    "test": [
+      "tests/manifest_test.rs"
+    ],
+    "example": [
+      "examples/demo.rs"
+    ]
+  }
+}
