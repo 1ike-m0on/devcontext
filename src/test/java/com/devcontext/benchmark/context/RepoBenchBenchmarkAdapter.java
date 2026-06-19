@@ -48,7 +48,7 @@ public class RepoBenchBenchmarkAdapter implements ExternalBenchmarkAdapter {
                 .toList();
         if (existingRoots.isEmpty()) {
             return ExternalBenchmarkLoadResult.unavailable(
-                    "RepoBench root not found. Set REPOBENCH_ROOT or place it under D:/CodeX/repobench, D:/CodeX/RepoBench, D:/CodeX/repobench-main, or workspace/external/repobench.",
+                    "RepoBench root not found. Set REPOBENCH_ROOT or REPOBENCH_BENCHMARK_ROOT.",
                     candidates.stream().map(Path::toString).toList()
             );
         }
@@ -249,13 +249,6 @@ public class RepoBenchBenchmarkAdapter implements ExternalBenchmarkAdapter {
                 candidates.add(Path.of(env));
             }
         }
-        candidates.add(Path.of("D:/CodeX/repobench"));
-        candidates.add(Path.of("D:/CodeX/repobench/repobench-main"));
-        candidates.add(Path.of("D:/CodeX/RepoBench"));
-        candidates.add(Path.of("D:/CodeX/RepoBench/repobench-main"));
-        candidates.add(Path.of("D:/CodeX/repobench-main"));
-        candidates.add(Path.of("D:/CodeX/DevContext/workspace/external/repobench"));
-        candidates.add(Path.of("D:/CodeX/DevContext/workspace/external/repobench/repobench-main"));
         return candidates.stream().map(Path::toAbsolutePath).map(Path::normalize).toList();
     }
 

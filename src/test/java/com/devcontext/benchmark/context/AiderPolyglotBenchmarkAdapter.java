@@ -44,7 +44,7 @@ public class AiderPolyglotBenchmarkAdapter implements ExternalBenchmarkAdapter {
                 .orElse(null);
         if (root == null) {
             return ExternalBenchmarkLoadResult.unavailable(
-                    "Aider polyglot benchmark root not found. Set AIDER_POLYGLOT_BENCHMARK_ROOT or place it under D:/CodeX/polyglot-benchmark or D:/CodeX/Aider-AI/polyglot-benchmark.",
+                    "Aider polyglot benchmark root not found. Set AIDER_POLYGLOT_BENCHMARK_ROOT.",
                     candidates.stream().map(Path::toString).toList()
             );
         }
@@ -167,9 +167,6 @@ public class AiderPolyglotBenchmarkAdapter implements ExternalBenchmarkAdapter {
         if (env != null && !env.isBlank()) {
             candidates.add(Path.of(env));
         }
-        candidates.add(Path.of("D:/CodeX/polyglot-benchmark"));
-        candidates.add(Path.of("D:/CodeX/Aider-AI/polyglot-benchmark"));
-        candidates.add(Path.of("D:/CodeX/aider-0.86.0/aider-0.86.0/tmp.benchmarks/polyglot-benchmark"));
         return candidates.stream().toList();
     }
 
