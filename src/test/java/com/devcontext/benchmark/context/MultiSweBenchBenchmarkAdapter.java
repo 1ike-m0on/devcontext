@@ -412,8 +412,6 @@ public class MultiSweBenchBenchmarkAdapter implements ExternalBenchmarkAdapter {
         if (env != null && !env.isBlank()) {
             candidates.add(Path.of(env));
         }
-        candidates.add(Path.of("D:/CodeX/multi-swe-bench-data/flash/multi_swe_bench_flash.jsonl"));
-        candidates.add(Path.of("D:/CodeX/multi-swe-bench-data/mini/multi_swe_bench_mini.jsonl"));
         return candidates.stream().map(Path::toAbsolutePath).map(Path::normalize).toList();
     }
 

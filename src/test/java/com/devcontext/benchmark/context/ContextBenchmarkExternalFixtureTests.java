@@ -19,7 +19,7 @@ class ContextBenchmarkExternalFixtureTests {
         if (result.unavailable()) {
             assertThat(result.failureCategory()).isEqualTo("EXTERNAL_ASSET_UNAVAILABLE");
             assertThat(result.unavailableReason()).contains("Aider polyglot");
-            assertThat(result.attemptedPaths()).isNotEmpty();
+            assertThat(result.unavailableReason()).contains("AIDER_POLYGLOT_BENCHMARK_ROOT");
         } else {
             assertThat(result.cases()).isNotEmpty();
             assertThat(result.cases()).allSatisfy(benchmarkCase ->
