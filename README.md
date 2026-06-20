@@ -2,104 +2,81 @@
 
 中文 | [English](./README.en.md) | [日本語](./README.ja-JP.md)
 
-DevContext 是一个面向个人开发者的本地 AI 研发助手。你把一个代码仓库导入进来，它会生成 AI 可读的项目上下文，建立可检索的本地知识库，帮你审查 Git 改动，并把代码审查、工程决策和 AI 运行过程沉淀成可复用资产。
+DevContext 是一个面向本地代码仓库的 AI 研发工作台。它帮助个人开发者把项目文件、源码证据、知识库问答、代码审查、工程决策和 AI 运行追踪组织成一套可复用、可验证的上下文系统。
 
-它解决的不是“再做一个聊天框”，而是一个更实际的问题：
+它的重点不是再做一个聊天框，而是解决代码项目里更常见的问题：
 
-> 每次让 AI 帮你看项目、查代码、做 Review、解释历史方案时，都不想重新贴一堆背景、路径、diff 和文档。
+> AI 回答代码问题时，应该知道该看哪些源文件、哪些证据不能用、答案引用来自哪里，以及证据不足时应该拒答。
 
-## 适合谁用
+## 适合谁
 
-DevContext 适合下面这些场景：
+DevContext 适合这些场景：
 
-- 你经常用 AI 辅助开发，但每次都要重复解释项目结构和业务背景。
-- 你希望把一个新项目快速整理成 AI 能理解的上下文。
-- 你想在提交前让 AI 检查当前改动、最近提交或两个分支之间的 diff。
-- 你有本地设计文档、测试记录、排查笔记，希望能像问知识库一样查询。
-- 你希望把重要技术决策记录下来，以后遇到相似问题时能被召回。
+- 你经常用 AI 理解项目，但不想每次重新解释目录、模块、配置和历史决策。
+- 你希望把一个本地仓库整理成可索引、可提问的知识工作台。
+- 你想让 AI 基于真实源码证据回答项目问题，而不是只根据泛泛文档推断。
+- 你想在提交前审查当前改动、最近提交或分支差异。
+- 你想保存工程决策、Review 反馈和 AI 运行过程，之后可以继续复盘。
 
-DevContext 目前更适合作为个人本地工具使用，还不是团队级权限系统或企业审计平台。
+当前版本更适合作为个人本地开发工具，不是企业级权限系统、团队审计平台或自动修复机器人。
 
-## 你可以用它做什么
+## 核心能力
 
-### 1. 导入项目并生成 AI 上下文
+### 1. 项目导入与知识库索引
 
-选择一个本地项目后，DevContext 会扫描代码、配置、文档和 Git 信息，生成一组 AI 友好的上下文资产：
+在首页选择或导入一个本地项目后，DevContext 会围绕这个项目建立知识库索引。索引会读取项目中的代码、配置、SQL、测试、文档和生成的 `.ai` 资产，让后续问答可以检索项目事实。
 
-- `AGENTS.md`
-- `.ai/AI_README.md`
-- `.ai/code-map.json`
-- `.ai/generated/project-structure.md`
-- `.ai/generated/tech-architecture.md`
-- `.ai/generated/dev-guide.md`
-- `.ai/generated/core-flows.md`
+索引是项目级操作。项目内容发生变化后，需要刷新索引。
 
-这些文件的目标是让 AI 先理解“这个项目是什么、怎么运行、有哪些核心模块、代码大概在哪里”，减少你后续提问时的解释成本。
+### 2. Source-Grounded Knowledge RAG
 
-### 2. 查询本地知识库
+用户提问时，DevContext 会自动完成本次问题的上下文选择：
 
-你可以把项目文档、`.ai` 资产、SQL、配置、测试记录、监控记录等内容加入知识库，然后直接问：
+1. 理解问题意图。
+2. 判断需要源码、测试、配置、SQL、部署、运行记录还是其他证据。
+3. 从知识库和项目结构中选择 primary evidence。
+4. 过滤 generated docs、无关文档、测试噪声或 forbidden source。
+5. 基于 selected evidence 生成回答。
+6. 返回 Markdown 答案、source paths、citations 和可展开 trace。
 
-- “缓存具体是怎么做的？”
-- “SQL 里用了哪些索引？”
-- “秒杀链路怎么监控？”
-- “部署配置在哪里？”
-- “这个项目的核心流程是什么？”
+也就是说，用户不需要先手动“生成上下文”。上下文是每次提问时自动生成的。
 
-DevContext 会返回带来源引用的答案，并展示命中的文档片段，方便你判断答案是否可信。
+### 3. 代码审查
 
-### 3. 做 AI Code Review
+DevContext 支持几种常见 Review 入口：
 
-DevContext 支持几种常见审查入口：
-
-- 审查当前工作区改动，包括 staged / unstaged。
-- 审查最近一次提交。
-- 审查两个分支之间的 diff。
+- 当前工作区改动。
+- 最近一次提交。
+- 当前分支相对默认分支的差异。
 - 手动粘贴 diff。
 
-审查完成后，你可以看到结构化的问题列表，包括：
+审查结果会以结构化 Issue 展示，包括严重级别、文件路径、说明、影响、修改建议和置信度。你可以对问题做 accepted、false positive、fixed、rejected 等反馈，后续用于复盘和质量改进。
 
-- 严重级别
-- 文件路径和行号
-- 问题说明
-- 影响
-- 修改建议
-- 置信度
-- 状态反馈
+### 4. 工程决策记忆
 
-你可以把问题标记为“采纳”“误报”“已修复”或“拒绝”，这些反馈会被保存下来，后续用于复盘和质量改进。
+你可以把重要技术选择保存成 Decision Card，例如缓存策略、幂等方案、分页策略、消息补偿方案等。每条决策可以记录场景、候选方案、最终选择、理由、权衡、适用条件和证据。
 
-### 4. 记录工程决策
+后续遇到类似问题时，DevContext 可以检索相关决策，帮助判断哪些经验可以复用，哪些地方需要调整。
 
-当你做了一个重要技术选择，比如分页策略、缓存方案、幂等方案、消息补偿方案，可以把它保存成 Decision Card：
+### 5. 运行追踪与可解释性
 
-- 场景是什么
-- 有哪些备选方案
-- 最终选了什么
-- 为什么这么选
-- 有哪些权衡
-- 什么情况下适用
-- 什么情况下不适用
-- 证据来自哪里
+DevContext 会记录 AI 任务的 AgentRun、AgentEvent、RetrievalRecord 和 evidence evaluation。你可以查看一次回答或审查背后使用了哪些证据、检索到哪些 source paths、调用了哪个模型，以及是否触发了 no-answer guard。
 
-以后遇到类似问题时，DevContext 可以召回历史决策，并让 AI 判断“能不能复用、哪些部分要调整、风险在哪里”。
+## 推荐使用流程
 
-### 5. 查看 AI 行为追踪
+1. 打开 DevContext 前端。
+2. 创建或选择项目。
+3. 选择项目路径。
+4. 建立或刷新知识库索引。
+5. 在知识库页面提问。
+6. 阅读 Markdown 答案、source paths 和引用。
+7. 如需更多细节，展开 trace / evidence details。
 
-每次 AI 任务都会记录 AgentRun 和 AgentEvent。你可以看到一次结果背后发生了什么：
+上下文生成发生在第 5 步提问过程中，不需要作为单独准备步骤执行。
 
-- 读取了哪个 diff
-- 加载了哪些上下文
-- 构造了多大的 prompt
-- 调用了哪个模型
-- 模型输出是否成功解析
-- 最终保存了哪些结果
+## 快速启动
 
-这让 AI 输出不再是一个黑盒。
-
-## 快速开始
-
-推荐先用 Docker Compose 启动完整本地环境：
+推荐用 Docker Compose 启动完整本地环境：
 
 ```bash
 docker compose up -d --build
@@ -107,131 +84,48 @@ docker compose up -d --build
 
 启动后访问：
 
-- 产品前端：http://localhost:5173
-- 后端 API / smoke/debug：http://localhost:18080
+- 前端：http://localhost:5173
+- 后端 API：http://localhost:18080
 - Qdrant：http://localhost:6333
 
-日常使用请从 React 产品前端 `http://localhost:5173` 进入。Spring Boot 的静态页面只作为 smoke/debug 入口，不作为正式产品 UI。
-
-Docker 模式下，后端运行在容器内，只能访问挂载进容器的项目目录。默认项目挂载目录是：
+Docker 模式下，后端运行在容器内，只能访问挂载进容器的项目目录。默认挂载是：
 
 ```text
 ./workspace/projects -> /workspace/projects
 ```
 
-因此第一次体验时，可以把要分析的项目放到仓库下的 `workspace/projects/`，然后在 DevContext 中填写容器内路径，例如：
+第一次体验时，可以把要分析的项目放到仓库下的 `workspace/projects/`，然后在 DevContext 中选择容器内路径：
 
 ```text
 /workspace/projects/my-project
 ```
 
-如果你的项目在其他目录，可以通过环境变量指定挂载位置：
+如果要使用其他宿主机目录，可以指定：
 
 ```powershell
 $env:DEVCONTEXT_PROJECTS_DIR="C:\Users\you\Documents\projects"
 docker compose up -d --build
 ```
 
-然后在 DevContext 中使用：
+然后在 DevContext 中选择：
 
 ```text
 /workspace/projects/your-project
 ```
 
-默认 Docker 配置使用 `mock` 模型，可以先验证导入项目、生成上下文、知识库索引和界面流程。
+## 模型配置
 
-### Docker 模式切换 LLM
+默认 Docker 配置使用 `mock` 模型，适合先验证项目导入、索引、前端流程和基础功能。
 
-推荐在 React 产品前端的“模型设置”中保存 provider、model 和 Gemini / DeepSeek API Key。保存会写入被 Git 忽略的 `config/devcontext.local.yml`，API 和页面只显示 key 状态，不返回明文 API Key。
-
-当前版本不做运行时热切换；保存后如果返回 `restartRequired=true`，请重启 backend 生效：
-
-```bash
-docker compose up -d backend
-```
-
-Docker Compose 仍会读取项目根目录的 `.env`。如果要手动切换模型，也可以修改 `.env`，然后重启后端容器。
-
-例如切到 DeepSeek：
-
-```properties
-DEVCONTEXT_LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=<your-api-key>
-DEEPSEEK_MODEL=deepseek-chat
-```
-
-手动修改 `.env` 后执行：
-
-```bash
-docker compose up -d backend
-```
-
-如果你修改的是镜像构建相关文件，例如 `Dockerfile`、`pom.xml`、前端依赖，再执行：
-
-```bash
-docker compose up -d --build
-```
-
-只修改 `.env` 里的模型、API Key、超时时间、向量库 provider 时，通常不需要重新 build。
-
-## 第一次使用
-
-1. 导入一个本地项目。
-2. 在项目工作台点击“全量刷新生成资产”。
-3. 进入知识库，把生成的 `.ai` 资产加入知识源并索引。
-4. 在知识库问一个项目问题。
-5. 进入代码审查，选择“审查当前改动”或“审查最近提交”。
-
-## 健康检查
-
-```http
-GET http://localhost:18080/api/health
-```
-
-LLM provider/model/key 状态和最近错误类型也可以单独查看：
-
-```http
-GET http://localhost:18080/api/settings/llm
-```
-
-也可以通过本地 API 保存设置：
-
-```http
-PUT http://localhost:18080/api/settings/llm
-Content-Type: application/json
-
-{
-  "provider": "gemini",
-  "model": "gemini-2.0-flash",
-  "geminiApiKey": "<your-api-key>"
-}
-```
-
-这些状态接口只返回 API Key 是否已配置，不会返回明文 API Key。保存后如果响应中 `restartRequired=true`，需要重启 backend 后才会生效。
-
-## 使用真实模型
-
-推荐先在 React 产品前端 `http://localhost:5173` 打开“模型设置”，保存 provider、model 和对应 API Key。DevContext 会写入被 Git 忽略的 `config/devcontext.local.yml`，并在响应中返回 `restartRequired=true` 提醒你重启 backend。
-
-也可以把 `.env.example` 复制为 `.env`，然后只改 `.env`：
+如果要使用真实模型，可以复制 `.env.example`：
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Docker Compose 会读取这份配置。切换模型后执行 `docker compose up -d backend` 重启后端容器即可。
+然后配置 provider 和 API Key。
 
-本地 Maven 运行也可以使用被 Git 忽略的 `devcontext.local.yml` 或 `config/devcontext.local.yml` 覆盖模型配置，避免通过 PowerShell 临时环境变量切换。
-
-### Gemini
-
-```properties
-DEVCONTEXT_LLM_PROVIDER=gemini
-GEMINI_API_KEY=<your-api-key>
-GEMINI_MODEL=gemini-2.0-flash
-```
-
-### DeepSeek
+DeepSeek 示例：
 
 ```properties
 DEVCONTEXT_LLM_PROVIDER=deepseek
@@ -240,22 +134,44 @@ DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_TIMEOUT=120s
 ```
 
-API Key、本地数据库、运行日志和生成的项目私有上下文不会提交到 Git。
+Gemini 示例：
 
-## 向量库
+```properties
+DEVCONTEXT_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<your-api-key>
+GEMINI_MODEL=gemini-2.0-flash
+```
 
-默认使用本地 JDBC 向量存储，开箱即可运行。也可以在 `.env` 中切换：
+修改 `.env` 后通常只需要重启后端：
+
+```bash
+docker compose up -d backend
+```
+
+如果修改了 `Dockerfile`、`pom.xml` 或前端依赖，再执行：
+
+```bash
+docker compose up -d --build
+```
+
+API Key、本地数据库、运行日志和生成的私有上下文不会提交到 Git。
+
+## 向量存储
+
+Docker Compose 默认使用 Qdrant：
+
+```properties
+DEVCONTEXT_VECTOR_PROVIDER=qdrant
+QDRANT_BASE_URL=http://qdrant:6333
+```
+
+本地开发也可以使用 JDBC 向量存储：
 
 ```properties
 DEVCONTEXT_VECTOR_PROVIDER=jdbc
 ```
 
-如果你想使用 Qdrant：
-
-```properties
-DEVCONTEXT_VECTOR_PROVIDER=qdrant
-QDRANT_BASE_URL=http://localhost:6333
-```
+当前版本仍保留自研 embedding/vector 适配，Spring AI 的 embedding、vector store、tool calling 和 observability 接入属于后续演进方向。
 
 ## 常用命令
 
@@ -271,46 +187,51 @@ mvn test
 npm.cmd run frontend:build
 ```
 
-Code Review 评估：
+上下文质量门禁：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-code-review-benchmark.ps1 -TimeoutSeconds 150 -RetryCount 1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-context-benchmark.ps1 -Suite all
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-context-benchmark.ps1 -Suite evidence-pack
 ```
 
-知识库评估：
+知识库验收：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-knowledge-rag-benchmark.ps1
 ```
 
-决策召回评估：
+代码审查验收：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-recall-quality-benchmark.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-code-review-benchmark.ps1 -TimeoutSeconds 150 -RetryCount 1
 ```
 
-## 当前状态
+## 当前可验收状态
 
-DevContext 当前已经具备可用的本地闭环：
+当前版本已经具备一条可用的本地闭环：
 
-- 项目导入和上下文生成可用。
-- 知识库检索和带引用问答可用。
-- AI Code Review 主流程可用。
-- Review Issue 状态反馈可用。
-- Decision Card 和决策召回基础闭环可用。
-- AgentRun 事件追踪可用。
-- React 前端已经覆盖主要入口，但仍处于 Alpha 阶段。
+- 项目创建、编辑、删除和路径选择。
+- 知识库索引和刷新状态展示。
+- Source-grounded Knowledge RAG 问答。
+- Markdown 答案渲染、source paths、citations 和 trace 展示。
+- AI Code Review 和 Review feedback。
+- Decision Card 和基础决策召回。
+- AgentRun / RetrievalRecord 追踪。
+- React 前端覆盖主要工作流。
 
-仍在继续改进的部分：
+上下文和知识库质量已经有自动化门禁覆盖，包括 no-LLM context benchmark、evidence-pack、HTTP benchmark 和真实 LLM smoke/sample。最新合并基线中，核心 context gates 和 Knowledge RAG acceptance 已通过。
 
-- 前端交互和历史记录体验。
-- 更稳定的上下文可信度评估。
-- 更细粒度的代码定位和按需回溯。
-- 更强的 no-answer 边界，避免知识不足时过度推断。
-- 更大规模的真实项目评估。
+## 边界与限制
 
-## 不适合期待什么
+请不要把 DevContext 理解为：
 
-DevContext 目前不会自动修改你的代码、自动提交 Git，也不宣称拥有 IDE 级完整语义理解。它的定位是：
+- 自动修改代码的 Agent。
+- 自动提交或自动开 PR 的工具。
+- 完整 IDE 级语义分析器。
+- 完整 ReAct Agent 框架。
+- 企业级权限、审计和多用户协作平台。
+- 对任意问题都必须回答的聊天机器人。
 
-> 帮个人开发者把项目事实、代码变更、知识库和历史决策组织成 AI 可以持续使用的上下文工作台。
+当证据不足时，DevContext 应该倾向于说明证据不足，而不是编造答案。它的定位是：
+
+> 帮个人开发者把项目事实、源码证据、知识库、代码审查和历史决策组织成 AI 可以持续使用的本地上下文工作台。
