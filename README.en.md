@@ -2,104 +2,81 @@
 
 [中文](./README.md) | English | [日本語](./README.ja-JP.md)
 
-DevContext is a local AI development assistant for individual developers. Import a codebase, and DevContext helps generate AI-readable project context, build a searchable local knowledge base, review Git changes, and preserve review feedback, engineering decisions, and agent traces as reusable development context.
+DevContext is a local AI development workspace for code repositories. It helps individual developers organize project files, source evidence, knowledge-base answers, code reviews, engineering decisions, and AI traces into reusable and verifiable project context.
 
-It is not just another chat box. It is built for a practical pain point:
+It is not just another chat box. DevContext is built for a more practical problem:
 
-> When you ask AI to understand a project, review code, explain a design, or reuse an old decision, you should not have to paste the same background, paths, diffs, and notes every time.
+> When AI answers a codebase question, it should know which source files matter, which evidence must not be used, where citations come from, and when the available evidence is not enough.
 
 ## Who It Is For
 
 DevContext is useful if:
 
-- You often use AI while coding, but repeatedly explain the same project context.
-- You want to turn a new local repository into AI-friendly documentation.
+- You often use AI to understand projects, but repeatedly explain the same modules, paths, configuration, and decisions.
+- You want to turn a local repository into an indexed, queryable project workspace.
+- You want AI answers to be grounded in source evidence instead of broad documentation guesses.
 - You want an AI review before committing current changes, the latest commit, or a branch diff.
-- You have local design docs, testing notes, troubleshooting records, and project assets that should be queryable.
-- You want important engineering decisions to be remembered and recalled later.
+- You want to preserve engineering decisions, review feedback, and AI execution traces for later reuse.
 
-DevContext is currently designed as a personal local tool. It is not yet a team permission system or enterprise audit platform.
+The current version is designed as a personal local tool. It is not an enterprise permission system, team audit platform, or automated code-fixing robot.
 
-## What You Can Do
+## Core Capabilities
 
-### 1. Import A Project And Generate AI Context
+### 1. Project Import And Knowledge Indexing
 
-After you select a local project, DevContext scans code, configuration, documents, and Git information, then generates AI-friendly context assets:
+After you create or select a local project, DevContext builds a knowledge index for that project. The index reads code, configuration, SQL, tests, documents, and generated `.ai` assets so later questions can retrieve project facts.
 
-- `AGENTS.md`
-- `.ai/AI_README.md`
-- `.ai/code-map.json`
-- `.ai/generated/project-structure.md`
-- `.ai/generated/tech-architecture.md`
-- `.ai/generated/dev-guide.md`
-- `.ai/generated/core-flows.md`
+Indexing is project-scoped. Refresh the index when the project changes.
 
-These files help AI understand what the project is, how it runs, where important modules live, and which files matter before you ask detailed questions.
+### 2. Source-Grounded Knowledge RAG
 
-### 2. Ask The Local Knowledge Base
+When you ask a question, DevContext automatically prepares the context for that specific query:
 
-You can index project docs, `.ai` assets, SQL files, configuration, testing notes, observability records, and other local engineering evidence. Then ask questions such as:
+1. Understand the query intent.
+2. Decide whether the answer needs source code, tests, configuration, SQL, deployment files, runtime records, or other evidence.
+3. Select primary evidence from the project structure and knowledge index.
+4. Filter generated docs, unrelated documents, noisy tests, and forbidden sources.
+5. Generate an answer from the selected evidence.
+6. Return a Markdown answer, source paths, citations, and expandable trace details.
 
-- “How is caching implemented?”
-- “Which SQL indexes are used?”
-- “How is the flash-sale flow monitored?”
-- “Where is the deployment configuration?”
-- “What is the core business flow of this project?”
+You do not need to click a separate "generate context" button before asking. Context generation happens during each question.
 
-DevContext answers with source citations and retrieved context snippets so you can judge whether the answer is grounded.
-
-### 3. Run AI Code Review
+### 3. AI Code Review
 
 DevContext can review:
 
-- current working-tree changes, including staged and unstaged files.
+- current working-tree changes.
 - the latest commit.
-- a branch comparison.
+- the current branch compared with the default branch.
 - a manually pasted diff.
 
-The result is a structured issue list with:
+Review output is stored as structured issues with severity, file path, description, impact, suggested fix, and confidence. You can mark issues as accepted, false positive, fixed, or rejected. Feedback is saved for later review and quality improvement.
 
-- severity
-- file path and line number
-- problem description
-- impact
-- suggested fix
-- confidence
-- feedback status
+### 4. Engineering Decision Memory
 
-You can mark issues as accepted, false positive, fixed, or rejected. Feedback is saved for later review and quality improvement.
+You can save important technical choices as Decision Cards, such as caching strategy, idempotency design, pagination, or message compensation. A card can include the scenario, options, final decision, reasons, trade-offs, applicable conditions, and supporting evidence.
 
-### 4. Save Engineering Decisions
+When a similar problem appears later, DevContext can retrieve related decisions and help decide what can be reused and what must be adapted.
 
-When you make an important technical choice, such as pagination, caching, idempotency, or message compensation, you can save it as a Decision Card:
+### 5. Traces And Explainability
 
-- scenario
-- options
-- decision
-- reasons
-- trade-offs
-- applicable conditions
-- non-applicable conditions
-- evidence
+DevContext records AgentRun, AgentEvent, RetrievalRecord, and evidence evaluation data. You can inspect which evidence was used, which source paths were retrieved, which model was called, and whether the no-answer guard was triggered.
 
-When a similar problem appears later, DevContext can recall related decisions and ask AI to judge what can be reused, what must be adapted, and what risks remain.
+## Recommended Workflow
 
-### 5. Inspect Agent Traces
+1. Open the DevContext frontend.
+2. Create or select a project.
+3. Select the project path.
+4. Build or refresh the knowledge index.
+5. Ask a question in Knowledge Q&A.
+6. Read the Markdown answer, source paths, and citations.
+7. Expand trace / evidence details when you need more context.
 
-Every AI task is recorded as an AgentRun with AgentEvents. You can inspect:
-
-- which diff was collected.
-- which context was loaded.
-- how large the prompt was.
-- which model was called.
-- whether the response was parsed successfully.
-- which results were saved.
-
-This makes AI output easier to debug and explain.
+Context generation happens in step 5 as part of answering the question.
 
 ## Quick Start
 
-The easiest way to try DevContext is Docker Compose:
+The easiest way to run the full local stack is Docker Compose:
 
 ```bash
 docker compose up -d --build
@@ -108,7 +85,7 @@ docker compose up -d --build
 Then open:
 
 - Frontend: http://localhost:5173
-- Backend: http://localhost:18080
+- Backend API: http://localhost:18080
 - Qdrant: http://localhost:6333
 
 In Docker mode, the backend runs inside a container and can only access project directories mounted into that container. The default mount is:
@@ -117,7 +94,7 @@ In Docker mode, the backend runs inside a container and can only access project 
 ./workspace/projects -> /workspace/projects
 ```
 
-For a first run, put the project you want to analyze under `workspace/projects/`, then import it with a container path such as:
+For a first run, place the project you want to analyze under `workspace/projects/`, then import it with a container path:
 
 ```text
 /workspace/projects/my-project
@@ -136,67 +113,19 @@ Then import projects with:
 /workspace/projects/your-project
 ```
 
-The default Docker setup uses the `mock` model, so you can verify project import, context generation, knowledge indexing, and the UI flow before configuring a real LLM.
+## Model Configuration
 
-### Switch LLM In Docker Mode
+The default Docker setup uses the `mock` model, which is useful for verifying project import, indexing, frontend flow, and baseline features.
 
-Docker Compose reads the `.env` file at the repository root. To switch models, you do not need to start the backend locally. Edit `.env`, then restart the backend container.
-
-For DeepSeek:
-
-```properties
-DEVCONTEXT_LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=<your-api-key>
-DEEPSEEK_MODEL=deepseek-chat
-```
-
-Then run:
-
-```bash
-docker compose up -d backend
-```
-
-If you changed image build inputs such as `Dockerfile`, `pom.xml`, or frontend dependencies, run:
-
-```bash
-docker compose up -d --build
-```
-
-For `.env` changes such as model provider, API key, timeout, or vector provider, a rebuild is usually not required.
-
-## First Run
-
-1. Import a local project.
-2. Open the project workspace and refresh context assets.
-3. Add generated `.ai` assets to the knowledge base and index them.
-4. Ask a project question in Knowledge Q&A.
-5. Open Code Review and review current changes or the latest commit.
-
-## Health Check
-
-```http
-GET http://localhost:18080/api/health
-```
-
-## Use A Real Model
-
-The recommended setup is to copy `.env.example` to `.env` and edit that file:
+To use a real model, copy `.env.example`:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Docker Compose reads this configuration. After changing the model provider, run `docker compose up -d backend` to restart the backend container.
+Then configure a provider and API key.
 
-### Gemini
-
-```properties
-DEVCONTEXT_LLM_PROVIDER=gemini
-GEMINI_API_KEY=<your-api-key>
-GEMINI_MODEL=gemini-2.0-flash
-```
-
-### DeepSeek
+DeepSeek example:
 
 ```properties
 DEVCONTEXT_LLM_PROVIDER=deepseek
@@ -205,22 +134,44 @@ DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_TIMEOUT=120s
 ```
 
+Gemini example:
+
+```properties
+DEVCONTEXT_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<your-api-key>
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+After changing `.env`, restarting the backend is usually enough:
+
+```bash
+docker compose up -d backend
+```
+
+If you changed `Dockerfile`, `pom.xml`, or frontend dependencies, rebuild:
+
+```bash
+docker compose up -d --build
+```
+
 API keys, local databases, runtime logs, and private generated context files are not committed to Git.
 
 ## Vector Store
 
-The default local JDBC vector store works out of the box. You can also switch it in `.env`:
+Docker Compose uses Qdrant by default:
+
+```properties
+DEVCONTEXT_VECTOR_PROVIDER=qdrant
+QDRANT_BASE_URL=http://qdrant:6333
+```
+
+For local development, you can also use the JDBC vector store:
 
 ```properties
 DEVCONTEXT_VECTOR_PROVIDER=jdbc
 ```
 
-To use Qdrant:
-
-```properties
-DEVCONTEXT_VECTOR_PROVIDER=qdrant
-QDRANT_BASE_URL=http://localhost:6333
-```
+The current version still keeps custom embedding/vector adapters. Spring AI integration for embedding, vector store, tool calling, and observability is planned as future infrastructure work.
 
 ## Useful Commands
 
@@ -236,46 +187,51 @@ Frontend build:
 npm.cmd run frontend:build
 ```
 
-Code Review benchmark:
+Context quality gates:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-code-review-benchmark.ps1 -TimeoutSeconds 150 -RetryCount 1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-context-benchmark.ps1 -Suite all
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-context-benchmark.ps1 -Suite evidence-pack
 ```
 
-Knowledge benchmark:
+Knowledge RAG acceptance:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-knowledge-rag-benchmark.ps1
 ```
 
-Decision recall benchmark:
+Code Review acceptance:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-recall-quality-benchmark.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\devcontext-code-review-benchmark.ps1 -TimeoutSeconds 150 -RetryCount 1
 ```
 
-## Current Status
+## Current Acceptance Status
 
-DevContext currently has a usable local loop:
+The current version has a usable local loop:
 
-- project import and context generation.
-- local knowledge retrieval and cited answers.
-- AI Code Review.
-- Review Issue feedback.
+- project create, edit, delete, and path selection.
+- knowledge indexing with visible status.
+- source-grounded Knowledge RAG answers.
+- Markdown answer rendering, source paths, citations, and trace details.
+- AI Code Review and review feedback.
 - Decision Cards and basic decision recall.
-- AgentRun tracing.
-- React frontend for the main workflows, currently in Alpha.
+- AgentRun / RetrievalRecord tracing.
+- React frontend for the main workflows.
 
-Still improving:
+Context and Knowledge RAG quality are covered by automated gates, including deterministic no-LLM context benchmarks, evidence-pack checks, HTTP benchmarks, and real LLM smoke/sample runs. The latest merged baseline passes the core context gates and Knowledge RAG acceptance.
 
-- frontend history and interaction details.
-- context confidence scoring.
-- finer-grained code localization and on-demand lookup.
-- stronger no-answer behavior when evidence is missing.
-- larger real-project evaluations.
+## Boundaries And Limitations
 
-## What Not To Expect Yet
+DevContext is not:
 
-DevContext does not automatically edit your code, commit to Git, or claim complete IDE-level semantic understanding. Its purpose is:
+- an autonomous code-editing agent.
+- a tool that commits to Git or opens PRs automatically.
+- a complete IDE-level semantic analyzer.
+- a full ReAct agent framework.
+- an enterprise permission, audit, or multi-user collaboration platform.
+- a chatbot that must answer every question.
 
-> Help individual developers organize project facts, code changes, local knowledge, and engineering decisions into an AI-ready context workspace.
+When evidence is insufficient, DevContext should say so instead of inventing an answer. Its purpose is:
+
+> Help individual developers organize project facts, source evidence, local knowledge, code review results, and engineering decisions into an AI-ready local context workspace.
