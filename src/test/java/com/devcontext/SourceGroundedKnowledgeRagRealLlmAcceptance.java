@@ -196,6 +196,7 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
         boolean answerSourcePathsExist = answerNonExistentSourcePaths.isEmpty();
         boolean answerSourcePathsFromSelectedEvidence = answerUnsupportedSourcePaths.isEmpty();
         boolean docsGeneratedManualBlocked = generatedManualDocsUsageCount == 0;
+        boolean noAnswerExpected = acceptanceCase.noAnswerExpected();
         EvidenceChainCheck evidenceChainCheck = acceptanceCase.databaseChainRequired()
                 ? databaseChainCheck(citations, answer.answer(), selectedPaths, evidenceGroups)
                 : EvidenceChainCheck.notRequired();
@@ -207,7 +208,7 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
         if (!sourceEvidenceLoopUsed) {
             failures.add("source_evidence_loop_trace_failure:missing_started_event");
         }
-        if (!sourceEvidenceLoopSupported) {
+        if (!sourceEvidenceLoopSupported && !noAnswerExpected) {
             failures.add("source_evidence_loop_trace_failure:missing_supported_event");
         }
         if (fallbackToLegacyRetrieval) {
@@ -221,6 +222,68 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
         }
         if (legacyRetrievalEventCount > 0) {
             failures.add("fallback_failure:legacy_retrieval_events=" + legacyRetrievalEventCount);
+        }
+        if (noAnswerExpected) {
+            if (sourceEvidenceLoopSupported) {
+                failures.add("answer_guard_failure:no_answer_case_marked_supported");
+            }
+            if (!citations.isEmpty()) {
+                failures.add("answer_guard_failure:no_answer_case_returned_citations=" + selectedPaths);
+            }
+            if (evaluation.sufficient() || !"insufficient_evidence".equals(evaluation.answerGuardDecision())) {
+                failures.add("answer_guard_failure:expected_insufficient_evidence_but_was=" + evaluation.answerGuardDecision());
+            }
+            if (!answerSelfReportsInsufficientEvidence) {
+                failures.add("answer_guard_failure:no_answer_missing_insufficient_evidence_message");
+            }
+            if (!answerSourcePathsExist) {
+                failures.add("answer_source_path_failure:nonexistent=" + answerNonExistentSourcePaths);
+            }
+            if (!answerSourcePathsFromSelectedEvidence) {
+                failures.add("answer_source_path_failure:unsupported=" + answerUnsupportedSourcePaths);
+            }
+            return new CaseResult(
+                    acceptanceCase,
+                    answer.runId(),
+                    provider(),
+                    model(),
+                    timeout(),
+                    sourceEvidenceLoopUsed,
+                    sourceEvidenceLoopSupported,
+                    evidencePackOnly,
+                    primarySourceOnly,
+                    fallbackToLegacyRetrieval,
+                    citations.isEmpty(),
+                    true,
+                    true,
+                    selectedPaths.isEmpty(),
+                    docsGeneratedManualBlocked,
+                    answerSelfReportsInsufficientEvidence,
+                    answerHasSourcePathCitation,
+                    answerSourcePathsExist,
+                    answerSourcePathsFromSelectedEvidence,
+                    evidenceChainCheck,
+                    evaluation.status(),
+                    evaluation.answerGuardDecision(),
+                    answer.queryPlan().intent(),
+                    unsupportedCitationMarkers.size(),
+                    generatedManualDocsUsageCount,
+                    oldRetrievalPrimaryEvidenceCount,
+                    legacyRetrievalEventCount,
+                    failures.isEmpty() ? "passed" : "failed",
+                    failures.isEmpty() ? "none" : failureCategory(failures),
+                    failures.isEmpty() ? "passed" : String.join("; ", failures),
+                    selectedPaths,
+                    evidenceGroups,
+                    scoreReasons,
+                    eventTypes,
+                    eventSummaries,
+                    unsupportedCitationMarkers,
+                    answerSourcePaths,
+                    answerNonExistentSourcePaths,
+                    answerUnsupportedSourcePaths,
+                    safeText(answer.answer())
+            );
         }
         if (!allCitationsFromSourceEvidenceLoop) {
             failures.add("citation_source_failure:non_sel_citation");
@@ -1137,8 +1200,29 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
             List<String> expectedEvidenceGroups,
             List<String> requiredSelectedPaths,
             List<String> requiredAnswerTerms,
-            boolean databaseChainRequired
+            boolean databaseChainRequired,
+            boolean noAnswerExpected
     ) {
+        AcceptanceCase(
+                String id,
+                String question,
+                String expectedIntent,
+                List<String> expectedEvidenceGroups,
+                List<String> requiredSelectedPaths,
+                List<String> requiredAnswerTerms,
+                boolean databaseChainRequired
+        ) {
+            this(
+                    id,
+                    question,
+                    expectedIntent,
+                    expectedEvidenceGroups,
+                    requiredSelectedPaths,
+                    requiredAnswerTerms,
+                    databaseChainRequired,
+                    false
+            );
+        }
     }
 
     private record EvidenceChainCheck(String evidenceChainName, boolean matched, List<String> failures) {
@@ -1254,6 +1338,7 @@ class SourceGroundedKnowledgeRagRealLlmAcceptance {
             payload.put("expectedEvidenceGroups", acceptanceCase.expectedEvidenceGroups());
             payload.put("requiredSelectedPaths", acceptanceCase.requiredSelectedPaths());
             payload.put("requiredAnswerTerms", acceptanceCase.requiredAnswerTerms());
+            payload.put("noAnswerExpected", acceptanceCase.noAnswerExpected());
             payload.put("runId", runId);
             payload.put("provider", provider);
             payload.put("model", model);

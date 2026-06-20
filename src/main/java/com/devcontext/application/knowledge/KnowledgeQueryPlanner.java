@@ -461,7 +461,8 @@ public class KnowledgeQueryPlanner {
         boolean llmSettings = matches(rawTokens, "llm", "deepseek")
                 && matches(rawTokens, "settings", "provider", "model", "key", "timeout", "endpoint", "connected");
         boolean providerClient = matches(rawTokens, "provider", "client")
-                && !matchesText(lower, "source evidence loop", "readonlycontextprovider", "read only context provider");
+                && !matchesText(lower, "source evidence loop", "readonlycontextprovider", "read only context provider")
+                && !matches(rawTokens, "where", "implemented", "implementation", "call", "calls", "class", "method", "service");
         boolean configTerms = matches(rawTokens, "config", "configuration", "settings", "timeout",
                 "key", "application", "yml", "yaml", "properties");
         boolean sourceEvidenceProvider = matchesText(lower, "source evidence loop")
