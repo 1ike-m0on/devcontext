@@ -121,16 +121,25 @@ public class SourceEvidenceLoopKnowledgeAdapter {
             return primaryEvidence == null ? List.of() : primaryEvidence;
         }
         LinkedHashMap<String, EvidenceFragment> selected = new LinkedHashMap<>();
-        for (EvidenceFragment fragment : primaryEvidence == null ? List.<EvidenceFragment>of() : primaryEvidence) {
-            selected.put(fragmentKey(fragment), fragment);
-        }
-        for (EvidenceFragment fragment : explicitFragments) {
-            if ("test_or_contract".equals(fragment.evidenceGroup())) {
-                selected.entrySet().removeIf(entry ->
-                        entry.getKey().startsWith("test_or_contract|")
-                                && !normalizePath(entry.getValue().path()).equals(normalizePath(fragment.path())));
+        boolean testFocus = explicitFragments.stream()
+                .anyMatch(fragment -> "test_or_contract".equals(fragment.evidenceGroup()));
+        if (testFocus) {
+            for (EvidenceFragment fragment : explicitFragments) {
+                selected.put(fragmentKey(fragment), fragment);
             }
-            selected.put(fragmentKey(fragment), fragment);
+        }
+        for (EvidenceFragment fragment : primaryEvidence == null ? List.<EvidenceFragment>of() : primaryEvidence) {
+            selected.putIfAbsent(fragmentKey(fragment), fragment);
+        }
+        if (!testFocus) {
+            for (EvidenceFragment fragment : explicitFragments) {
+                if ("test_or_contract".equals(fragment.evidenceGroup())) {
+                    selected.entrySet().removeIf(entry ->
+                            entry.getKey().startsWith("test_or_contract|")
+                                    && !normalizePath(entry.getValue().path()).equals(normalizePath(fragment.path())));
+                }
+                selected.put(fragmentKey(fragment), fragment);
+            }
         }
         return List.copyOf(selected.values());
     }

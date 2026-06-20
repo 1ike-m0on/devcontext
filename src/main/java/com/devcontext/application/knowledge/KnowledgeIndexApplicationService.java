@@ -305,9 +305,21 @@ public class KnowledgeIndexApplicationService {
                     || lower.contains("/schema/");
         }
         if (hasExtension(lower, PROJECT_CODE_EXTENSIONS)) {
+            if (isProjectTestPath(lower)) {
+                return true;
+            }
             return PROJECT_CODE_KEYWORDS.stream().anyMatch(lower::contains);
         }
         return false;
+    }
+
+    private boolean isProjectTestPath(String lower) {
+        return lower.startsWith("src/test/")
+                || lower.contains("/src/test/")
+                || lower.contains("/test/")
+                || lower.contains("/tests/")
+                || lower.endsWith("test.java")
+                || lower.endsWith("tests.java");
     }
 
     private boolean isComposeFile(String lower) {

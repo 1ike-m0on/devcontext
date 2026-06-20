@@ -516,6 +516,7 @@ public class ObservationMapper {
                     topResults.add(metadata(
                             "filePath", sanitizer.metadataText(result.path("filePath").asText(null)),
                             "evidenceTypes", canonicalEvidenceTypes(result.path("evidenceTypes")),
+                            "scoreReasons", stringList(result.path("scoreReasons")),
                             "fusedScore", result.path("fusedScore").isMissingNode() ? null : result.path("fusedScore").asDouble()
                     ));
                 }

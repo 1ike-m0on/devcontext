@@ -171,7 +171,7 @@ public class RagAnswerApplicationService {
             runService.recordEvent(run.id(), "LLM_CALLED", llmProperties.providerModelLabel(), "LLM response generated", "success", null, null);
             String answer = sourceEvidenceLoopPath
                     ? withSourcePathContract(response.content(), searchResponse.results())
-                    : response.content();
+                    : sanitizeAnswerAgainstSelectedEvidence(response.content(), searchResponse.results());
             runService.recordEvent(run.id(), "RAG_ANSWER_GENERATED", searchResponse.rewrittenQuery(), answer.length() + " chars", "success", null, null);
             runService.finishRun(run, response.inputTokenEstimate(), response.outputTokenEstimate());
             return new RagAnswerResult(
@@ -391,6 +391,19 @@ public class RagAnswerApplicationService {
             result.append("- ").append(path).append(" [S").append(index++).append("]\n");
         }
         return result.toString().stripTrailing();
+    }
+
+    private String sanitizeAnswerAgainstSelectedEvidence(String answer, List<KnowledgeSearchResult> citations) {
+        LinkedHashSet<String> paths = citations.stream()
+                .map(KnowledgeSearchResult::filePath)
+                .filter(path -> path != null && !path.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (paths.isEmpty()) {
+            return answer == null ? "" : answer.strip();
+        }
+        return stripLegacySourceMarkers(stripUnsupportedInsufficiencyStatements(
+                stripUnsupportedSourcePaths(answer, paths)
+        ));
     }
 
     private String stripUnsupportedSourcePaths(String answer, LinkedHashSet<String> selectedPaths) {

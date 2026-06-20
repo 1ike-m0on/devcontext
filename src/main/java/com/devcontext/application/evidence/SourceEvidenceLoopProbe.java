@@ -727,7 +727,12 @@ public class SourceEvidenceLoopProbe {
                                 "LLM properties",
                                 "properties object for provider/model/key/timeout",
                                 List.of("ConfigurationProperties", "apiKey", "timeout", "provider", "model"),
-                                List.of("properties", "configuration", "llm", "api-key", "timeout", "model"))
+                                List.of("properties", "configuration", "llm", "api-key", "timeout", "model")),
+                        spec("properties",
+                                "application config file",
+                                "application YAML/properties values for provider/key/timeout",
+                                List.of("provider", "timeout", "apiKey", "api-key", "apiKeyEnv"),
+                                List.of("application.yml", "application.yaml", "application.properties", "provider", "timeout", "api-key"))
                 )),
                 new EvidenceGroupSpec("settings_controller", List.of(
                         spec("settings_controller",
@@ -2113,10 +2118,13 @@ public class SourceEvidenceLoopProbe {
                     && containsAny(content, "record ", "class ", "enum ");
             case "test_or_smoke" -> isTestPath(path)
                     && containsAny(content, "@test", "assertthat", "false_positive", "feedback", "review");
-            case "properties" -> isJavaPath(path)
+            case "properties" -> (isJavaPath(path)
                     && (path.contains("/config/") || content.contains("configurationproperties"))
                     && containsAny(path + "\n" + content, "properties", "config")
-                    && containsAny(content, "configurationproperties", "apikey", "api-key", "timeout", "provider", "model");
+                    && containsAny(content, "configurationproperties", "apikey", "api-key", "timeout", "provider", "model"))
+                    || ((path.endsWith(".yml") || path.endsWith(".yaml") || path.endsWith(".properties"))
+                    && containsAny(path, "application", "config", "settings")
+                    && containsAny(content, "apikey", "api-key", "apikeyenv", "timeout", "provider", "model"));
             case "settings_controller" -> isJavaPath(path)
                     && containsAny(path + "\n" + content, "controller", "@restcontroller", "@controller")
                     && containsAny(content, "settings", "/api/settings", "@postmapping", "@putmapping", "apikey", "timeout");

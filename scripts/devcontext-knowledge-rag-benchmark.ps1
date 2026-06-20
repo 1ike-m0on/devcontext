@@ -27,6 +27,8 @@ try {
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
 $DefaultCasesPath = "docs/benchmarks/knowledge-rag/knowledge-rag-acceptance-cases.json"
+$AnswerSourcePathPattern = "(?i)(?<![A-Za-z0-9_./\\-])(?:(?:src|config|frontend|scripts|docs|\.ai)[/\\][A-Za-z0-9_./\\-]+\.(?:java|sql|xml|yml|yaml|properties|json|md|ts|tsx|js|py|rs|go|cpp|h|kt)|pom\.xml|build\.gradle(?:\.kts)?|docker-compose\.ya?ml|application\.ya?ml)"
+$CitationMarkerPattern = "\[S(\d+)\]"
 
 if ($Help) {
     @"
@@ -91,6 +93,147 @@ function Get-StringArray {
         }
     }
     return $items
+}
+
+function Normalize-SourcePath {
+    param([string]$PathValue)
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return ""
+    }
+    $normalized = $PathValue.Trim().Replace("\", "/").ToLowerInvariant()
+    while ($normalized.StartsWith("./")) {
+        $normalized = $normalized.Substring(2)
+    }
+    return $normalized
+}
+
+function Get-AnswerSourcePaths {
+    param([string]$Text)
+    $paths = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @()
+    }
+    foreach ($match in [System.Text.RegularExpressions.Regex]::Matches($Text, $AnswerSourcePathPattern)) {
+        $path = Normalize-SourcePath $match.Value
+        if (-not [string]::IsNullOrWhiteSpace($path) -and -not $paths.Contains($path)) {
+            $paths.Add($path)
+        }
+    }
+    return @($paths)
+}
+
+function Get-UnsupportedCitationMarkers {
+    param(
+        [string]$Text,
+        [int]$CitationCount
+    )
+    $markers = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @()
+    }
+    foreach ($match in [System.Text.RegularExpressions.Regex]::Matches($Text, $CitationMarkerPattern)) {
+        $index = [int]$match.Groups[1].Value
+        if ($index -lt 1 -or $index -gt $CitationCount) {
+            $marker = "[S$index]"
+            if (-not $markers.Contains($marker)) {
+                $markers.Add($marker)
+            }
+        }
+    }
+    return @($markers)
+}
+
+function Get-CitationPaths {
+    param([object[]]$Citations)
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($citation in (As-Array $Citations)) {
+        $path = Normalize-SourcePath ([string](Get-PropertyValue $citation "filePath" ""))
+        if (-not [string]::IsNullOrWhiteSpace($path) -and -not $paths.Contains($path)) {
+            $paths.Add($path)
+        }
+    }
+    return @($paths)
+}
+
+function Get-UnsupportedAnswerSourcePaths {
+    param(
+        [string[]]$AnswerSourcePaths,
+        [string[]]$CitationPaths
+    )
+    $citationSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in (Get-StringArray $CitationPaths)) {
+        [void]$citationSet.Add((Normalize-SourcePath $path))
+    }
+    $unsupported = [System.Collections.Generic.List[string]]::new()
+    foreach ($path in (Get-StringArray $AnswerSourcePaths)) {
+        $normalized = Normalize-SourcePath $path
+        if (-not [string]::IsNullOrWhiteSpace($normalized) -and -not $citationSet.Contains($normalized)) {
+            $unsupported.Add($normalized)
+        }
+    }
+    return @($unsupported)
+}
+
+function Get-NonExistentAnswerSourcePaths {
+    param(
+        [string[]]$AnswerSourcePaths,
+        [string]$Root
+    )
+    $missing = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrWhiteSpace($Root) -or -not (Test-Path -LiteralPath $Root)) {
+        return @()
+    }
+    $rootPath = [System.IO.Path]::GetFullPath($Root)
+    foreach ($path in (Get-StringArray $AnswerSourcePaths)) {
+        $candidate = [System.IO.Path]::GetFullPath((Join-Path $rootPath $path))
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            $missing.Add((Normalize-SourcePath $path))
+        }
+    }
+    return @($missing)
+}
+
+function Test-GeneratedManualPath {
+    param([string]$PathValue)
+    $path = Normalize-SourcePath $PathValue
+    return $path.StartsWith(".ai/generated/") -or $path.StartsWith(".ai/manual/")
+}
+
+function Get-GeneratedManualDocsUsageCount {
+    param([object[]]$Citations)
+    $count = 0
+    foreach ($citation in (As-Array $Citations)) {
+        $types = @(Get-ResultEvidenceTypes $citation)
+        $path = [string](Get-PropertyValue $citation "filePath" "")
+        if ($types -contains "GENERATED_DOC" -or $types -contains "MANUAL_DOC" -or (Test-GeneratedManualPath $path)) {
+            $count += 1
+        }
+    }
+    return $count
+}
+
+function Get-DocsOnlyCitationCount {
+    param([object[]]$Citations)
+    $count = 0
+    foreach ($citation in (As-Array $Citations)) {
+        if (Test-OnlyGenericEvidence $citation) {
+            $count += 1
+        }
+    }
+    return $count
+}
+
+function Get-OldRetrievalPrimaryEvidenceCount {
+    param([object[]]$Citations)
+    $count = 0
+    foreach ($citation in (As-Array $Citations)) {
+        $sourceName = [string](Get-PropertyValue $citation "sourceName" "")
+        $scoreReasons = @(Get-ResultScoreReasons $citation)
+        if ($sourceName -ne "source-evidence-loop" -and -not ($scoreReasons -contains "source_evidence_loop")) {
+            $count += 1
+        }
+    }
+    return $count
 }
 
 function Has-Property {
@@ -971,7 +1114,8 @@ function Join-Md {
 function Evaluate-KnowledgeCase {
     param(
         [object]$Case,
-        [long]$ResolvedSourceId
+        [long]$ResolvedSourceId,
+        [string]$ResolvedSourceRoot
     )
     $caseTopK = [int](Get-PropertyValue $Case "topK" $TopK)
     if ($caseTopK -le 0) {
@@ -987,6 +1131,7 @@ function Evaluate-KnowledgeCase {
     $searchData = $searchResponse.data
     $results = @($searchData.results)
     $topResults = @(Get-ResultsAtK -Results $results -Limit $caseTopK)
+    $queryPlanIntent = [string](Get-PropertyValue $searchData.queryPlan "intent" "")
 
     $expectedPlanEvidenceTypes = @(Get-StringArray (Get-PropertyValue $Case "expectedPlanEvidenceTypes" @()))
     $expectedEvidenceTypes = @(Get-StringArray (Get-PropertyValue $Case "expectedEvidenceTypes" @()))
@@ -1056,6 +1201,14 @@ function Evaluate-KnowledgeCase {
     $evidenceEvaluationReasons = @()
     $answer = ""
     $citations = @()
+    $citationPaths = @()
+    $answerSourcePaths = @()
+    $nonExistentAnswerSourcePaths = @()
+    $unsupportedAnswerSourcePaths = @()
+    $unsupportedCitationMarkers = @()
+    $generatedManualDocsUsageCount = 0
+    $docsOnlyCitationCount = 0
+    $oldRetrievalPrimaryEvidenceCount = 0
     $askError = ""
 
     if (-not $SkipAsk) {
@@ -1065,6 +1218,14 @@ function Evaluate-KnowledgeCase {
             $askSuccess = $true
             $answer = [string]$askData.answer
             $citations = @($askData.citations)
+            $citationPaths = Get-CitationPaths $citations
+            $answerSourcePaths = Get-AnswerSourcePaths $answer
+            $nonExistentAnswerSourcePaths = Get-NonExistentAnswerSourcePaths -AnswerSourcePaths $answerSourcePaths -Root $ResolvedSourceRoot
+            $unsupportedAnswerSourcePaths = Get-UnsupportedAnswerSourcePaths -AnswerSourcePaths $answerSourcePaths -CitationPaths $citationPaths
+            $unsupportedCitationMarkers = Get-UnsupportedCitationMarkers -Text $answer -CitationCount @($citations).Count
+            $generatedManualDocsUsageCount = Get-GeneratedManualDocsUsageCount $citations
+            $docsOnlyCitationCount = Get-DocsOnlyCitationCount $citations
+            $oldRetrievalPrimaryEvidenceCount = Get-OldRetrievalPrimaryEvidenceCount $citations
             $evidenceEvaluation = Get-PropertyValue $askData "evidenceEvaluation" $null
             if ($null -ne $evidenceEvaluation) {
                 $evidenceEvaluationStatus = [string](Get-PropertyValue $evidenceEvaluation "status" "")
@@ -1105,6 +1266,28 @@ function Evaluate-KnowledgeCase {
         }
     }
 
+    $casePassed = $planEvidenceHit `
+        -and $evidenceTop1Hit `
+        -and $evidenceTop3Hit `
+        -and $requiredEvidenceAtKPass `
+        -and $scoreReasonAtKPass `
+        -and $sourceHitAtK `
+        -and $forbiddenSourcePass `
+        -and $genericDocPass
+    if (-not $SkipAsk) {
+        $casePassed = $casePassed `
+            -and $askSuccess `
+            -and $citationSourceHit `
+            -and $citationEvidenceHit `
+            -and $answerKeywordHit `
+            -and $answerForbiddenPass `
+            -and $noAnswerPass `
+            -and $evidenceEvaluationPass `
+            -and (@($unsupportedCitationMarkers).Count -eq 0) `
+            -and (@($nonExistentAnswerSourcePaths).Count -eq 0) `
+            -and (@($unsupportedAnswerSourcePaths).Count -eq 0)
+    }
+
     $topFiles = @()
     foreach ($result in $topResults) {
         $topFiles += [pscustomobject]@{
@@ -1122,9 +1305,12 @@ function Evaluate-KnowledgeCase {
         query = $query
         topK = $caseTopK
         retrievalRecordId = [long]$searchData.retrievalRecordId
+        queryPlan = $searchData.queryPlan
+        queryPlanIntent = $queryPlanIntent
         planRequiredEvidenceTypes = Get-StringArray (Get-PropertyValue $searchData.queryPlan "requiredEvidenceTypes" @())
         planPreferredEvidenceTypes = Get-StringArray (Get-PropertyValue $searchData.queryPlan "preferredEvidenceTypes" @())
         normalizedTerms = Get-StringArray (Get-PropertyValue $searchData.queryPlan "normalizedTerms" @())
+        casePassed = $casePassed
         planEvidenceHit = $planEvidenceHit
         evidenceTop1Hit = $evidenceTop1Hit
         evidenceTop3Hit = $evidenceTop3Hit
@@ -1156,6 +1342,15 @@ function Evaluate-KnowledgeCase {
         evidenceEvaluationReasons = $evidenceEvaluationReasons
         answer = $answer
         citations = $citations
+        citationPaths = $citationPaths
+        answerSourcePaths = $answerSourcePaths
+        nonExistentAnswerSourcePaths = $nonExistentAnswerSourcePaths
+        unsupportedAnswerSourcePaths = $unsupportedAnswerSourcePaths
+        unsupportedCitationMarkers = $unsupportedCitationMarkers
+        unsupportedCitationCount = @($unsupportedCitationMarkers).Count
+        generatedManualDocsUsageCount = $generatedManualDocsUsageCount
+        docsOnlyCitationCount = $docsOnlyCitationCount
+        oldRetrievalPrimaryEvidenceCount = $oldRetrievalPrimaryEvidenceCount
         topFiles = $topFiles
     }
 }
@@ -1181,6 +1376,9 @@ function Write-Reports {
     $noAnswerCases = @($CaseResults | Where-Object { $_.noAnswerExpected })
     $summary = [pscustomobject]@{
         caseCount = $CaseResults.Count
+        passedCases = @($CaseResults | Where-Object { [bool]$_.casePassed }).Count
+        failedCases = @($CaseResults | Where-Object { -not [bool]$_.casePassed }).Count
+        passRate = Get-Rate @($CaseResults | ForEach-Object { [bool]$_.casePassed })
         sourceId = $ResolvedSourceId
         sourceRoot = $ResolvedSourceRoot
         topK = $TopK
@@ -1201,6 +1399,13 @@ function Write-Reports {
         answerForbiddenPassRate = if ($SkipAsk) { $null } else { Get-Rate @($askCases | ForEach-Object { [bool]$_.answerForbiddenPass }) }
         evidenceEvaluationPassRate = if ($SkipAsk) { $null } else { Get-Rate @($askCases | ForEach-Object { [bool]$_.evidenceEvaluationPass }) }
         noAnswerAccuracy = if ($SkipAsk) { $null } else { Get-Rate @($noAnswerCases | ForEach-Object { [bool]$_.noAnswerPass }) }
+        unsupportedCitationCount = if ($SkipAsk) { $null } else { @($CaseResults | Measure-Object -Property unsupportedCitationCount -Sum).Sum }
+        answerSourcePathMissingCases = if ($SkipAsk) { $null } else { @($CaseResults | Where-Object { @($_.answerSourcePaths).Count -eq 0 }).Count }
+        nonExistentAnswerSourcePathCount = if ($SkipAsk) { $null } else { @($CaseResults | ForEach-Object { @($_.nonExistentAnswerSourcePaths).Count } | Measure-Object -Sum).Sum }
+        unsupportedAnswerSourcePathCount = if ($SkipAsk) { $null } else { @($CaseResults | ForEach-Object { @($_.unsupportedAnswerSourcePaths).Count } | Measure-Object -Sum).Sum }
+        generatedManualDocsUsageCount = if ($SkipAsk) { $null } else { @($CaseResults | Measure-Object -Property generatedManualDocsUsageCount -Sum).Sum }
+        docsOnlyCitationCount = if ($SkipAsk) { $null } else { @($CaseResults | Measure-Object -Property docsOnlyCitationCount -Sum).Sum }
+        oldRetrievalPrimaryEvidenceCount = if ($SkipAsk) { $null } else { @($CaseResults | Measure-Object -Property oldRetrievalPrimaryEvidenceCount -Sum).Sum }
     }
 
     $payload = [pscustomobject]@{
@@ -1230,21 +1435,27 @@ function Write-Reports {
     $lines += ""
     $lines += "## Summary"
     $lines += ""
-    $lines += "| Cases | PlanHit | EvidenceTop1 | EvidenceTop3 | Required@K | ScoreReason@K | Source@K | ForbiddenPass | GenericPass | AvgGenericPollution | AskSuccess | CitationSource | CitationEvidence | EvidenceEvaluation | AnswerKeyword | AnswerForbidden | NoAnswerAccuracy |"
-    $lines += "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-    $lines += "| $($summary.caseCount) | $($summary.searchPlanHitRate) | $($summary.evidenceTop1HitRate) | $($summary.evidenceTop3HitRate) | $($summary.requiredEvidenceAtKPassRate) | $($summary.scoreReasonAtKPassRate) | $($summary.sourceHitAtKRate) | $($summary.forbiddenSourcePassRate) | $($summary.genericDocPassRate) | $($summary.averageGenericDocPollutionAtK) | $($summary.askSuccessRate) | $($summary.citationSourceHitRate) | $($summary.citationEvidenceHitRate) | $($summary.evidenceEvaluationPassRate) | $($summary.answerKeywordHitRate) | $($summary.answerForbiddenPassRate) | $($summary.noAnswerAccuracy) |"
+    $lines += "| Cases | Passed | Failed | PassRate | PlanHit | EvidenceTop1 | EvidenceTop3 | Required@K | ScoreReason@K | Source@K | ForbiddenPass | GenericPass | AvgGenericPollution | AskSuccess | CitationSource | CitationEvidence | EvidenceEvaluation | AnswerKeyword | AnswerForbidden | NoAnswerAccuracy |"
+    $lines += "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+    $lines += "| $($summary.caseCount) | $($summary.passedCases) | $($summary.failedCases) | $($summary.passRate) | $($summary.searchPlanHitRate) | $($summary.evidenceTop1HitRate) | $($summary.evidenceTop3HitRate) | $($summary.requiredEvidenceAtKPassRate) | $($summary.scoreReasonAtKPassRate) | $($summary.sourceHitAtKRate) | $($summary.forbiddenSourcePassRate) | $($summary.genericDocPassRate) | $($summary.averageGenericDocPollutionAtK) | $($summary.askSuccessRate) | $($summary.citationSourceHitRate) | $($summary.citationEvidenceHitRate) | $($summary.evidenceEvaluationPassRate) | $($summary.answerKeywordHitRate) | $($summary.answerForbiddenPassRate) | $($summary.noAnswerAccuracy) |"
+    $lines += ""
+    $lines += "## Source Path And Pollution Summary"
+    $lines += ""
+    $lines += "| unsupportedCitationCount | answerSourcePathMissingCases | nonExistentAnswerSourcePathCount | unsupportedAnswerSourcePathCount | generatedManualDocsUsageCount | docsOnlyCitationCount | oldRetrievalPrimaryEvidenceCount |"
+    $lines += "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+    $lines += "| $($summary.unsupportedCitationCount) | $($summary.answerSourcePathMissingCases) | $($summary.nonExistentAnswerSourcePathCount) | $($summary.unsupportedAnswerSourcePathCount) | $($summary.generatedManualDocsUsageCount) | $($summary.docsOnlyCitationCount) | $($summary.oldRetrievalPrimaryEvidenceCount) |"
     $lines += ""
     $lines += "## Cases"
     $lines += ""
-    $lines += "| Case | Plan | EvidenceTop1 | EvidenceTop3 | Required@K | ScoreReason@K | Source@K | Forbidden | Generic | Ask | Evaluation | Citation | Answer | Top files |"
-    $lines += "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    $lines += "| Case | Passed | Intent | Plan | EvidenceTop1 | EvidenceTop3 | Required@K | ScoreReason@K | Source@K | Forbidden | Generic | Ask | Evaluation | Citation | Answer | Top files |"
+    $lines += "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
     foreach ($case in $CaseResults) {
         $topFiles = @($case.topFiles | Select-Object -First 3 | ForEach-Object { "$($_.filePath) [$($_.evidenceTypes -join '+')] {$($_.scoreReasons -join '+')}" })
         $askDisplay = if ($SkipAsk) { "" } else { [string]$case.askSuccess }
         $evaluationPass = if ($SkipAsk) { "" } else { [string]$case.evidenceEvaluationPass }
         $citationPass = if ($SkipAsk) { "" } else { "$($case.citationSourceHit)/$($case.citationEvidenceHit)" }
         $answerPass = if ($SkipAsk) { "" } else { "$($case.answerKeywordHit)/$($case.answerForbiddenPass)" }
-        $lines += "| $(ConvertTo-MdCell $case.name) | $($case.planEvidenceHit) | $($case.evidenceTop1Hit) | $($case.evidenceTop3Hit) | $($case.requiredEvidenceAtKPass) | $($case.scoreReasonAtKPass) | $($case.sourceHitAtK) | $($case.forbiddenSourcePass) | $($case.genericDocPass) | $(ConvertTo-MdCell $askDisplay) | $(ConvertTo-MdCell $evaluationPass) | $(ConvertTo-MdCell $citationPass) | $(ConvertTo-MdCell $answerPass) | $(Join-Md $topFiles) |"
+        $lines += "| $(ConvertTo-MdCell $case.name) | $($case.casePassed) | $(ConvertTo-MdCell $case.queryPlanIntent) | $($case.planEvidenceHit) | $($case.evidenceTop1Hit) | $($case.evidenceTop3Hit) | $($case.requiredEvidenceAtKPass) | $($case.scoreReasonAtKPass) | $($case.sourceHitAtK) | $($case.forbiddenSourcePass) | $($case.genericDocPass) | $(ConvertTo-MdCell $askDisplay) | $(ConvertTo-MdCell $evaluationPass) | $(ConvertTo-MdCell $citationPass) | $(ConvertTo-MdCell $answerPass) | $(Join-Md $topFiles) |"
     }
     $lines += ""
     $lines += "## Case Details"
@@ -1254,6 +1465,7 @@ function Write-Reports {
         $lines += ""
         $lines += "- Query: $($case.query)"
         $lines += "- Retrieval record: ``$($case.retrievalRecordId)``"
+        $lines += "- Query plan intent: ``$($case.queryPlanIntent)``"
         $lines += "- Plan required evidence: ``$($case.planRequiredEvidenceTypes -join ', ')``"
         $lines += "- Plan preferred evidence: ``$($case.planPreferredEvidenceTypes -join ', ')``"
         $lines += "- Normalized terms: ``$($case.normalizedTerms -join ', ')``"
@@ -1264,6 +1476,11 @@ function Write-Reports {
             $lines += "- Evidence evaluation matched required: ``$($case.evidenceEvaluationMatchedRequired -join ', ')``"
             $lines += "- Evidence evaluation missing required: ``$($case.evidenceEvaluationMissingRequired -join ', ')``"
             $lines += "- Evidence evaluation reasons: ``$($case.evidenceEvaluationReasons -join ' | ')``"
+            $lines += "- Citation paths: ``$($case.citationPaths -join ', ')``"
+            $lines += "- Answer source paths: ``$($case.answerSourcePaths -join ', ')``"
+            $lines += "- Non-existent answer source paths: ``$($case.nonExistentAnswerSourcePaths -join ', ')``"
+            $lines += "- Unsupported answer source paths: ``$($case.unsupportedAnswerSourcePaths -join ', ')``"
+            $lines += "- Unsupported citation markers: ``$($case.unsupportedCitationMarkers -join ', ')``"
         }
         if (-not $SkipAsk -and -not $case.askSuccess) {
             $lines += "- Ask error: ``$(ConvertTo-MdCell $case.askError)``"
@@ -1362,16 +1579,19 @@ $caseResults = @()
 foreach ($case in $cases) {
     Write-Host "Running case: $($case.name)"
     try {
-        $caseResults += Evaluate-KnowledgeCase -Case $case -ResolvedSourceId $resolvedSourceId
+        $caseResults += Evaluate-KnowledgeCase -Case $case -ResolvedSourceId $resolvedSourceId -ResolvedSourceRoot $resolvedSourceRoot
     } catch {
         $caseResults += [pscustomobject]@{
             name = [string]$case.name
             query = [string]$case.query
             topK = [int](Get-PropertyValue $case "topK" $TopK)
             retrievalRecordId = $null
+            queryPlan = $null
+            queryPlanIntent = ""
             planRequiredEvidenceTypes = @()
             planPreferredEvidenceTypes = @()
             normalizedTerms = @()
+            casePassed = $false
             planEvidenceHit = $false
             evidenceTop1Hit = $false
             evidenceTop3Hit = $false
@@ -1403,6 +1623,15 @@ foreach ($case in $cases) {
             evidenceEvaluationReasons = @()
             answer = ""
             citations = @()
+            citationPaths = @()
+            answerSourcePaths = @()
+            nonExistentAnswerSourcePaths = @()
+            unsupportedAnswerSourcePaths = @()
+            unsupportedCitationMarkers = @()
+            unsupportedCitationCount = 0
+            generatedManualDocsUsageCount = 0
+            docsOnlyCitationCount = 0
+            oldRetrievalPrimaryEvidenceCount = 0
             topFiles = @()
         }
         Write-Host "  failed: $($_.Exception.Message)"
@@ -1413,6 +1642,9 @@ $report = Write-Reports -RunId $runId -ResolvedSourceId $resolvedSourceId -Resol
 
 Write-Host ""
 Write-Host "Knowledge RAG acceptance benchmark complete"
+Write-Host "Cases:                   $($report.summary.caseCount)"
+Write-Host "Passed/Failed:           $($report.summary.passedCases)/$($report.summary.failedCases)"
+Write-Host "PassRate:                $($report.summary.passRate)"
 Write-Host "PlanHit:                 $($report.summary.searchPlanHitRate)"
 Write-Host "EvidenceTop1:            $($report.summary.evidenceTop1HitRate)"
 Write-Host "EvidenceTop3:            $($report.summary.evidenceTop3HitRate)"
@@ -1428,6 +1660,12 @@ if ($SkipAsk) {
     Write-Host "EvidenceEvaluationPass:  $($report.summary.evidenceEvaluationPassRate)"
     Write-Host "AnswerKeywordHit:        $($report.summary.answerKeywordHitRate)"
     Write-Host "NoAnswerAccuracy:        $($report.summary.noAnswerAccuracy)"
+    Write-Host "UnsupportedCitations:    $($report.summary.unsupportedCitationCount)"
+    Write-Host "AnswerPathMissingCases:  $($report.summary.answerSourcePathMissingCases)"
+    Write-Host "NonExistentAnswerPaths:  $($report.summary.nonExistentAnswerSourcePathCount)"
+    Write-Host "UnsupportedAnswerPaths:  $($report.summary.unsupportedAnswerSourcePathCount)"
+    Write-Host "GeneratedManualDocsUse:  $($report.summary.generatedManualDocsUsageCount)"
+    Write-Host "DocsOnlyCitationCount:   $($report.summary.docsOnlyCitationCount)"
 }
 Write-Host "Markdown report:         $($report.markdownPath)"
 Write-Host "JSON report:             $($report.jsonPath)"
