@@ -46,7 +46,7 @@ export default {
         mono: ["SFMono-Regular", "Consolas", "Liberation Mono", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 0 1px hsl(var(--primary) / 0.18), 0 24px 80px hsl(220 45% 5% / 0.46)",
+        glow: "0 1px 2px hsl(24 18% 24% / 0.04), 0 12px 28px hsl(24 18% 24% / 0.06)",
       },
     },
   },

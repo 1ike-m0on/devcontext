@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Activity,
   AlertTriangle,
@@ -7,16 +9,21 @@ import {
   Boxes,
   Brain,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Clock3,
   Database,
-  FileCode2,
   FileSearch,
+  FolderOpen,
   GitBranch,
   GitPullRequest,
   History,
   LayoutDashboard,
+  Link2,
   Loader2,
+  MapPin,
+  MessageSquare,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -36,6 +43,7 @@ import {
   Health,
   GitReviewSource,
   EvidenceCoverageReport,
+  EvidenceEvaluation,
   KnowledgeEvidenceType,
   KnowledgeIndexResult,
   KnowledgeQueryPlan,
@@ -77,8 +85,20 @@ import { Textarea } from "@/components/ui/textarea";
 
 type View = "overview" | "review" | "decisions" | "knowledge" | "runs" | "settings";
 
-const lifeServicePath = "C:\\Users\\lenovo\\Documents\\Codex\\2026-05-20\\life-service";
-const devContextPath = "D:\\CodeX\\DevContext";
+type OperationStatus = "idle" | "queued" | "running" | "completed" | "failed";
+type AskStage = "idle" | "understanding" | "evidence" | "answering" | "completed" | "insufficient" | "error";
+
+type SavedIndexState = {
+  projectId: number;
+  sourceId?: number;
+  status: OperationStatus;
+  startedAt?: string;
+  completedAt?: string;
+  failedAt?: string;
+  documentsIndexed?: number;
+  chunksIndexed?: number;
+  error?: string;
+};
 
 function App() {
   const queryClient = useQueryClient();
@@ -92,17 +112,6 @@ function App() {
   const llmSettingsQuery = useQuery({ queryKey: ["llm-settings"], queryFn: api.llmSettings });
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: api.projects });
   const sourcesQuery = useQuery({ queryKey: ["knowledge-sources"], queryFn: api.sources });
-  const contextQuery = useQuery({
-    queryKey: ["project-context", activeProjectId],
-    queryFn: () => api.contextStatus(activeProjectId as number),
-    enabled: Boolean(activeProjectId),
-  });
-  const evidenceCoverageQuery = useQuery({
-    queryKey: ["project-evidence-coverage", activeProjectId],
-    queryFn: () => api.projectEvidenceCoverage(activeProjectId as number),
-    enabled: Boolean(activeProjectId),
-  });
-
   const decisionParams = useMemo(() => {
     const params = new URLSearchParams();
     params.set("status", "active");
@@ -125,6 +134,15 @@ function App() {
       localStorage.removeItem("devcontext.activeProjectId");
     }
   }
+
+  useEffect(() => {
+    if (!projectIdValue || !projectsQuery.data) return;
+    const stillExists = projectsQuery.data.some((project) => String(project.id) === projectIdValue);
+    if (!stillExists) {
+      clearProjectLocalState(Number(projectIdValue));
+      selectProject("");
+    }
+  }, [projectIdValue, projectsQuery.data]);
 
   function show(message: string) {
     setNotice(message);
@@ -179,9 +197,6 @@ function App() {
             {activeView === "overview" ? (
               <Overview
                 project={selectedProject}
-                contextStatus={contextQuery.data}
-                evidenceCoverage={evidenceCoverageQuery.data}
-                evidenceCoverageLoading={evidenceCoverageQuery.isLoading}
                 decisions={decisionsQuery.data ?? []}
                 sources={sourcesQuery.data ?? []}
                 onGo={setActiveView}
@@ -201,7 +216,13 @@ function App() {
               />
             ) : null}
             {activeView === "knowledge" ? (
-              <KnowledgeWorkspace sources={sourcesQuery.data ?? []} onNotice={show} onOpenRun={openRun} />
+              <KnowledgeWorkspace
+                project={selectedProject}
+                sources={sourcesQuery.data ?? []}
+                settings={llmSettingsQuery.data}
+                onNotice={show}
+                onOpenRun={openRun}
+              />
             ) : null}
             {activeView === "runs" ? <RunWorkspace initialRunId={activeRunId} project={selectedProject} /> : null}
             {activeView === "settings" ? (
@@ -255,6 +276,7 @@ function TopBar({
     runs: "运行追踪",
     settings: "模型设置",
   };
+  const selectedProject = projects.find((project) => String(project.id) === selectedProjectId) ?? null;
 
   return (
     <header className="border-b border-border bg-background/95 px-5 py-4 lg:px-8">
@@ -264,22 +286,18 @@ function TopBar({
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{titleMap[activeView]}</h1>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <Label className="w-80 max-w-full">
-            项目
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              value={selectedProjectId}
-              onChange={(event) => onSelectProject(event.target.value)}
-            >
-              <option value="">未选择项目</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name} · {project.defaultBranch}
-                </option>
-              ))}
-            </select>
-          </Label>
-          <ImportProjectDialog onSelectProject={onSelectProject} onNotice={onNotice} />
+          {activeView === "overview" ? (
+            <ProjectPicker
+              projects={projects}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={onSelectProject}
+              onNotice={onNotice}
+            />
+          ) : (
+            <div className="rounded-md border border-border bg-secondary px-3 py-2 text-sm text-secondary-foreground">
+              {selectedProject ? selectedProject.name : "未选择项目"}
+            </div>
+          )}
           <Button size="icon" variant="secondary" onClick={onRefresh} aria-label="刷新">
             <RefreshCw className="size-4" />
           </Button>
@@ -289,21 +307,147 @@ function TopBar({
   );
 }
 
+function ProjectPicker({
+  projects,
+  selectedProjectId,
+  onSelectProject,
+  onNotice,
+}: {
+  projects: Project[];
+  selectedProjectId: string;
+  onSelectProject: (projectId: string) => void;
+  onNotice: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedProject = projects.find((project) => String(project.id) === selectedProjectId) ?? null;
+
+  function select(projectId: string) {
+    onSelectProject(projectId);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative w-[26rem] max-w-full">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">项目</div>
+      <Button
+        type="button"
+        variant="secondary"
+        className="h-auto min-h-11 w-full justify-between gap-3 px-3 py-2 text-left"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-card text-primary-foreground">
+            <FolderOpen className="size-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium text-foreground">
+              {selectedProject ? selectedProject.name : "未选择项目"}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {selectedProject ? pathSummary(selectedProject.rootPath) : "导入或选择一个项目"}
+            </span>
+          </span>
+        </span>
+        <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </Button>
+
+      {open ? (
+        <div className="absolute right-0 z-30 mt-2 w-[34rem] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-2 shadow-lg">
+          <div className="flex items-center justify-between gap-3 px-2 py-2">
+            <div>
+              <div className="text-sm font-medium">项目列表</div>
+              <div className="text-xs text-muted-foreground">选择项目，或直接编辑和删除登记。</div>
+            </div>
+            <ImportProjectDialog onSelectProject={onSelectProject} onNotice={onNotice} label="导入项目" />
+          </div>
+
+          <button
+            type="button"
+            className={cn(
+              "mt-1 flex w-full items-center gap-3 rounded-md border border-transparent px-3 py-2 text-left text-sm transition-colors hover:border-border hover:bg-secondary",
+              !selectedProjectId && "border-primary/50 bg-primary/20",
+            )}
+            onClick={() => select("")}
+          >
+            <span className="grid size-8 place-items-center rounded-md border border-border bg-background text-muted-foreground">
+              {!selectedProjectId ? <CheckCircle2 className="size-4" /> : <FolderOpen className="size-4" />}
+            </span>
+            <span>
+              <span className="block font-medium">未选择项目</span>
+              <span className="text-xs text-muted-foreground">回到准备流程起点</span>
+            </span>
+          </button>
+
+          <div className="mt-2 max-h-80 overflow-auto pr-1">
+            {projects.length ? (
+              projects.map((project) => {
+                const selected = String(project.id) === selectedProjectId;
+                return (
+                  <div
+                    key={project.id}
+                    className={cn(
+                      "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-transparent p-1 transition-colors",
+                      selected ? "border-primary/50 bg-primary/20" : "hover:border-border hover:bg-secondary/60",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left"
+                      onClick={() => select(String(project.id))}
+                    >
+                      <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-background text-primary-foreground">
+                        {selected ? <CheckCircle2 className="size-4" /> : <FolderOpen className="size-4" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-foreground">{project.name}</span>
+                        <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">
+                          {pathSummary(project.rootPath)} · {project.defaultBranch}
+                        </span>
+                      </span>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-1 pr-1">
+                      <ProjectSettingsDialog
+                        project={project}
+                        onNotice={onNotice}
+                        onSelectProject={onSelectProject}
+                        hideDelete
+                        trigger={
+                          <Button size="icon" variant="ghost" className="size-8" aria-label={`编辑 ${project.name}`}>
+                            <Pencil className="size-4" />
+                          </Button>
+                        }
+                      />
+                      <ProjectDeleteButton
+                        project={project}
+                        selected={selected}
+                        onSelectProject={onSelectProject}
+                        onNotice={onNotice}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-md border border-dashed border-border bg-background p-4 text-sm text-muted-foreground">
+                还没有项目。先导入项目，再建立索引。
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Overview({
   project,
-  contextStatus,
-  evidenceCoverage,
-  evidenceCoverageLoading,
-  decisions,
   sources,
   onGo,
   onNotice,
   onSelectProject,
 }: {
   project: Project | null;
-  contextStatus?: ProjectContextStatus;
-  evidenceCoverage?: ProjectEvidenceCoverageSummary;
-  evidenceCoverageLoading: boolean;
   decisions: DecisionCard[];
   sources: KnowledgeSource[];
   onGo: (view: View) => void;
@@ -311,163 +455,212 @@ function Overview({
   onSelectProject: (projectId: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const [contextMode, setContextMode] = useState<"refresh" | "missing">("refresh");
-  const [overwriteManual, setOverwriteManual] = useState(false);
-  const [generationResult, setGenerationResult] = useState<ContextGenerationResult | null>(null);
-  const generateContext = useMutation({
+  const projectSource = useMemo(() => findKnowledgeSourceForProject(sources, project), [sources, project?.rootPath]);
+  const [indexState, setIndexState] = useState<SavedIndexState | null>(() => readIndexState(project?.id ?? null));
+
+  useEffect(() => {
+    setIndexState(readIndexState(project?.id ?? null));
+  }, [project?.id]);
+
+  const resolvedIndexState = resolveIndexState(project, projectSource, indexState);
+  const indexBusy = resolvedIndexState.status === "queued" || resolvedIndexState.status === "running";
+
+  useEffect(() => {
+    if (!project || !indexBusy) return;
+    const timer = window.setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-sources"] });
+    }, 3500);
+    return () => window.clearInterval(timer);
+  }, [indexBusy, project?.id, queryClient]);
+
+  useEffect(() => {
+    if (!project || !indexState || !projectSource || projectSource.status !== "indexed") return;
+    if (indexState.status === "queued" || indexState.status === "running") {
+      const next = {
+        ...indexState,
+        sourceId: projectSource.id,
+        status: "completed" as OperationStatus,
+        completedAt: projectSource.updatedAt ?? new Date().toISOString(),
+      };
+      setIndexState(next);
+      writeIndexState(next);
+    }
+  }, [indexState, project, projectSource]);
+
+  const indexKnowledge = useMutation({
     mutationFn: async () => {
       if (!project) throw new Error("请先选择项目。");
-      return api.generateContext(project.id, {
-        overwriteGenerated: contextMode === "refresh",
-        overwriteManual,
-      });
+      const startedAt = new Date().toISOString();
+      const queued: SavedIndexState = { projectId: project.id, sourceId: projectSource?.id, status: "queued", startedAt };
+      setIndexState(queued);
+      writeIndexState(queued);
+      let source = projectSource;
+      if (!source) {
+        source = await api.createSource({
+          name: `${project.name} Knowledge`,
+          rootPath: project.rootPath,
+          sourceType: "project_ai_docs",
+        });
+        void queryClient.invalidateQueries({ queryKey: ["knowledge-sources"] });
+      }
+      const running: SavedIndexState = { projectId: project.id, sourceId: source.id, status: "running", startedAt };
+      setIndexState(running);
+      writeIndexState(running);
+      const result = await api.indexSource(source.id);
+      return { result, sourceId: source.id, startedAt };
     },
-    onSuccess: (result) => {
-      setGenerationResult(result);
-      void queryClient.invalidateQueries({ queryKey: ["project-context", project?.id] });
-      void queryClient.invalidateQueries({ queryKey: ["project-evidence-coverage", project?.id] });
-      const written = result.generatedFiles.length + result.manualCreatedFiles.length;
-      const skipped = result.generatedSkippedFiles.length + result.manualSkippedFiles.length;
-      onNotice(`上下文更新完成：写入 ${written} 个，跳过 ${skipped} 个。`);
+    onSuccess: ({ result, sourceId }) => {
+      if (!project) return;
+      const completed: SavedIndexState = {
+        projectId: project.id,
+        sourceId,
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        documentsIndexed: result.documentsIndexed,
+        chunksIndexed: result.chunksIndexed,
+      };
+      setIndexState(completed);
+      writeIndexState(completed);
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-sources"] });
+      onNotice(`索引完成：${result.documentsIndexed} 个文档，${result.chunksIndexed} 个片段。`);
     },
-    onError: (error) => onNotice(error instanceof Error ? error.message : "上下文生成失败。"),
+    onError: (error) => {
+      if (!project) return;
+      const failed: SavedIndexState = {
+        projectId: project.id,
+        sourceId: projectSource?.id,
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "索引失败。",
+      };
+      setIndexState(failed);
+      writeIndexState(failed);
+      onNotice(failed.error ?? "索引失败。");
+    },
   });
 
-  const auxiliaryDocs = auxiliaryContextDocuments(contextStatus?.documents ?? []);
-  const existingDocs = auxiliaryDocs.filter((item) => item.exists).length;
-  const totalDocs = auxiliaryDocs.length;
-  const quality = contextStatus?.quality;
-  const primaryEvidence = primaryEvidenceStats(evidenceCoverage);
+  const canAsk = Boolean(project && resolvedIndexState.status === "completed");
 
   return (
-    <div className="grid gap-5">
-      <section className="grid grid-cols-[minmax(0,1fr)_340px] gap-5 xl:grid-cols-[minmax(0,1fr)_360px] max-xl:grid-cols-1">
-        <div className="rounded-lg border border-border bg-card p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-sm text-muted-foreground">项目</div>
-              <h2 className="mt-1 text-xl font-semibold">{project?.name ?? "未选择项目"}</h2>
-              <div className="mt-2 max-w-3xl break-all font-mono text-xs text-muted-foreground">
-                {project?.rootPath ?? "选择或导入一个项目后开始工作"}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <ProjectSettingsDialog project={project} onNotice={onNotice} onSelectProject={onSelectProject} />
-              <Button disabled={!project || generateContext.isPending} onClick={() => generateContext.mutate()}>
-                {generateContext.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCode2 className="size-4" />}
-                {contextMode === "refresh" ? "全量刷新" : "补齐缺失"}
-              </Button>
-            </div>
+    <div className="mx-auto grid w-full max-w-6xl gap-6">
+      <section className="rounded-lg border border-border bg-card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div className="max-w-2xl">
+            <div className="text-sm font-medium text-muted-foreground">开始使用</div>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight">按顺序准备项目知识，然后开始提问</h2>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              首页只负责准备工作：选择项目、确认地址、刷新索引。提问时会自动完成问题理解、证据选择和回答生成。
+            </p>
           </div>
-          <div className="mt-5 grid gap-4 rounded-md border border-border bg-background p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">上下文更新模式</div>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  生成资产默认可覆盖，人工文档默认保护。再次生成时先选模式，再执行。
-                </p>
-              </div>
-              <div className="flex rounded-md border border-border bg-card p-1">
-                <button
-                  type="button"
-                  className={cn(
-                    "h-8 rounded px-3 text-sm text-muted-foreground",
-                    contextMode === "refresh" && "bg-primary text-primary-foreground",
-                  )}
-                  onClick={() => setContextMode("refresh")}
-                >
-                  全量刷新生成资产
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "h-8 rounded px-3 text-sm text-muted-foreground",
-                    contextMode === "missing" && "bg-primary text-primary-foreground",
-                  )}
-                  onClick={() => setContextMode("missing")}
-                >
-                  只补缺失资产
-                </button>
-              </div>
-            </div>
-            <label className="flex items-start gap-3 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1 size-4 accent-sky-400"
-                checked={overwriteManual}
-                onChange={(event) => setOverwriteManual(event.target.checked)}
-              />
-              <span>
-                覆盖人工文档
-                <span className="block text-muted-foreground">
-                  默认关闭，避免覆盖 `.ai/manual/*` 中的业务背景、偏好、决策和踩坑记录。
-                </span>
-              </span>
-            </label>
-          </div>
-          <div className="mt-5 grid grid-cols-6 gap-3 max-xl:grid-cols-3 max-lg:grid-cols-2 max-md:grid-cols-1">
-            <Metric
-              label="强证据"
-              value={evidenceCoverage ? `${evidenceCoverage.primaryEvidenceCount}` : evidenceCoverageLoading ? "扫描中" : "-"}
-              tone={evidenceCoverageTone(primaryEvidence)}
-            />
-            <Metric
-              label="原始覆盖"
-              value={primaryEvidence.total ? `${primaryEvidence.present}/${primaryEvidence.total}` : evidenceCoverageLoading ? "扫描中" : "-"}
-              tone={evidenceCoverageTone(primaryEvidence)}
-            />
-            <Metric
-              label="证据缺口"
-              value={evidenceCoverage ? `${primaryEvidence.missing}` : "-"}
-              tone={primaryEvidence.missing ? "warn" : evidenceCoverage ? "good" : "neutral"}
-            />
-            <Metric label="辅助文档" value={totalDocs ? `${existingDocs}/${totalDocs}` : "未生成"} tone={existingDocs ? "good" : "warn"} />
-            <Metric label="活跃决策" value={`${decisions.length}`} tone={decisions.length ? "good" : "neutral"} />
-            <Metric label="知识源" value={`${sources.length}`} tone={sources.length ? "good" : "neutral"} />
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border bg-card p-5">
-          <div className="text-sm font-medium">运行环境</div>
-          <div className="mt-4 grid gap-3">
-            <StateLine label="默认分支" value={project?.defaultBranch ?? "-"} />
-            <StateLine label="语言" value={project?.language ?? "-"} />
-            <StateLine label="框架" value={project?.framework ?? "-"} />
+          <div className="flex flex-wrap gap-2">
+            <ImportProjectDialog onSelectProject={onSelectProject} onNotice={onNotice} label="选择项目" />
+            <Button disabled={!canAsk} onClick={() => onGo("knowledge")}>
+              <Sparkles className="size-4" />
+              开始提问
+            </Button>
           </div>
         </div>
       </section>
 
-      <ContextGenerationPanel result={generationResult} />
-
-      <EvidenceCoveragePanel coverage={evidenceCoverage} loading={evidenceCoverageLoading} />
-
-      <SupportingDocumentQualityPanel quality={quality} documents={auxiliaryDocs} />
-
-      <section className="grid grid-cols-3 gap-5 max-xl:grid-cols-1">
-        <TaskCard
-          icon={GitPullRequest}
-          title="审查当前分支"
-          text="根据 base/compare 分支或粘贴 diff 生成 ReviewIssue。"
-          disabled={!project}
-          onClick={() => onGo("review")}
+      <section className="grid gap-3">
+        <WorkflowStep
+          icon={FolderOpen}
+          title="选择项目"
+          description={project ? project.rootPath : "选择一个本地项目后，后续操作会围绕它进行。"}
+          status={project ? "completed" : "idle"}
+          meta={project ? project.name : "未选择"}
+          action={<ImportProjectDialog onSelectProject={onSelectProject} onNotice={onNotice} label={project ? "更换项目" : "选择项目"} />}
         />
-        <TaskCard
-          icon={Brain}
-          title="复用历史决策"
-          text="检索 DecisionCard，让 AI 判断当前场景是否适用。"
-          disabled={!project}
-          onClick={() => onGo("decisions")}
+        <WorkflowStep
+          icon={MapPin}
+          title="确认项目地址"
+          description={project ? "地址只在首页管理；问答页和审查页只消费当前项目。" : "创建项目时填写名称并通过地址选择入口准备项目路径。"}
+          status={project ? "completed" : "idle"}
+          meta={project ? "可管理" : "未选择"}
+          action={<ProjectSettingsDialog project={project} onNotice={onNotice} onSelectProject={onSelectProject} />}
         />
-        <TaskCard
-          icon={BookOpen}
-          title="查询项目知识"
-          text="索引源码、配置、SQL、测试、报告和辅助文档，进行带引用问答。"
-          disabled={!project}
-          onClick={() => onGo("knowledge")}
+        <WorkflowStep
+          icon={Database}
+          title="建立/刷新索引"
+          description={indexStatusText(resolvedIndexState, projectSource)}
+          status={resolvedIndexState.status}
+          meta={indexStatusMeta(resolvedIndexState, projectSource)}
+          action={
+            <Button disabled={!project || indexBusy || indexKnowledge.isPending} onClick={() => indexKnowledge.mutate()}>
+              {indexBusy || indexKnowledge.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+              {resolvedIndexState.status === "completed" ? "刷新索引" : indexBusy ? "正在索引" : "建立索引"}
+            </Button>
+          }
+        />
+        <WorkflowStep
+          icon={MessageSquare}
+          title="提问并查看答案"
+          description={canAsk ? "索引已准备好，问答页会展示 Markdown、引用路径和 no-answer 状态。" : "先完成索引，再进入问答。"}
+          status={canAsk ? "completed" : "idle"}
+          meta="Answer + Sources + Trace"
+          action={
+            <Button disabled={!canAsk} onClick={() => onGo("knowledge")}>
+              <Sparkles className="size-4" />
+              开始提问
+            </Button>
+          }
+        />
+        <WorkflowStep
+          icon={Link2}
+          title="查看引用和 evidence trace"
+          description="回答页默认显示来源路径；更细的 evidence evaluation、provider/model 和 retrieval trace 默认折叠。"
+          status={canAsk ? "completed" : "idle"}
+          meta="Source paths"
+          action={
+            <Button variant="secondary" disabled={!canAsk} onClick={() => onGo("knowledge")}>
+              <FileSearch className="size-4" />
+              查看引用
+            </Button>
+          }
         />
       </section>
+    </div>
+  );
+}
 
-      <SupportingDocumentAssetsPanel documents={auxiliaryDocs} quality={quality} hasContextStatus={Boolean(contextStatus)} />
+function WorkflowStep({
+  icon: Icon,
+  title,
+  description,
+  status,
+  meta,
+  action,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  status: OperationStatus;
+  meta: string;
+  action: ReactNode;
+}) {
+  const running = status === "queued" || status === "running";
+  const completed = status === "completed";
+  return (
+    <div className="grid gap-4 rounded-lg border border-border bg-card p-5 md:grid-cols-[48px_minmax(0,1fr)_auto] md:items-center">
+      <div
+        className={cn(
+          "grid size-11 place-items-center rounded-lg border",
+          completed && "border-emerald-300/70 bg-emerald-50 text-emerald-800",
+          running && "border-amber-300/70 bg-amber-50 text-amber-800",
+          !completed && !running && "border-border bg-secondary text-muted-foreground",
+        )}
+      >
+        <Icon className="size-5" />
+      </div>
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="font-semibold">{title}</h3>
+          <Badge variant={operationBadge(status)}>{operationLabel(status)}</Badge>
+          <span className="text-xs text-muted-foreground">{meta}</span>
+        </div>
+        <p className="mt-1 break-words text-sm leading-6 text-muted-foreground">{description}</p>
+      </div>
+      <div className="flex md:justify-end">{action}</div>
     </div>
   );
 }
@@ -476,14 +669,20 @@ function ProjectSettingsDialog({
   project,
   onNotice,
   onSelectProject,
+  trigger,
+  hideDelete = false,
 }: {
   project: Project | null;
   onNotice: (message: string) => void;
   onSelectProject: (projectId: string) => void;
+  trigger?: ReactNode;
+  hideDelete?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const [form, setForm] = useState({ name: "", rootPath: "", defaultBranch: "main" });
+  const [browserPickNote, setBrowserPickNote] = useState<string | null>(null);
 
   useEffect(() => {
     setForm({
@@ -491,6 +690,7 @@ function ProjectSettingsDialog({
       rootPath: project?.rootPath ?? "",
       defaultBranch: project?.defaultBranch ?? "main",
     });
+    setBrowserPickNote(null);
   }, [project?.id, project?.name, project?.rootPath, project?.defaultBranch]);
 
   const updateProject = useMutation({
@@ -500,7 +700,6 @@ function ProjectSettingsDialog({
     },
     onSuccess: (updated) => {
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      void queryClient.invalidateQueries({ queryKey: ["project-context", updated.id] });
       onSelectProject(String(updated.id));
       setOpen(false);
       onNotice("项目信息已更新。");
@@ -511,25 +710,33 @@ function ProjectSettingsDialog({
   const deleteProject = useMutation({
     mutationFn: async () => {
       if (!project) throw new Error("请先选择项目。");
+      const confirmed = window.confirm(`删除项目登记“${project.name}”？本地文件不会被删除。`);
+      if (!confirmed) throw new Error("已取消删除。");
       return api.deleteProject(project.id);
     },
     onSuccess: () => {
+      if (project) clearProjectLocalState(project.id);
       onSelectProject("");
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      void queryClient.invalidateQueries({ queryKey: ["project-context"] });
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-sources"] });
       setOpen(false);
       onNotice("项目登记已移除，本地项目文件不会被删除。");
     },
-    onError: (error) => onNotice(error instanceof Error ? error.message : "项目删除失败。"),
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "项目删除失败。";
+      if (message !== "已取消删除。") onNotice(message);
+    },
   });
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="secondary" disabled={!project}>
-          <Settings2 className="size-4" />
-          项目设置
-        </Button>
+        {trigger ?? (
+          <Button variant="secondary" disabled={!project}>
+            <Settings2 className="size-4" />
+            项目设置
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -538,22 +745,50 @@ function ProjectSettingsDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <Label>名称<Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></Label>
-          <Label>本地路径<Input value={form.rootPath} onChange={(event) => setForm({ ...form, rootPath: event.target.value })} /></Label>
-          <Label>默认分支<Input value={form.defaultBranch} onChange={(event) => setForm({ ...form, defaultBranch: event.target.value })} /></Label>
-          <div className="rounded-md border border-amber-400/20 bg-amber-400/10 p-3 text-sm leading-6 text-amber-100">
-            删除项目只会移除 DevContext 工作台记录、上下文记录和相关历史记录，不会删除磁盘目录。
+          <div className="grid gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="secondary" onClick={() => directoryInputRef.current?.click()}>
+                <FileSearch className="size-4" />
+                选择地址
+              </Button>
+              <span className="text-xs text-muted-foreground">当前地址保留为已登记路径；浏览器选择不会暴露真实绝对路径。</span>
+            </div>
+            <input
+              ref={directoryInputRef}
+              type="file"
+              className="hidden"
+              multiple
+              {...{ webkitdirectory: "", directory: "" }}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                const relative = file?.webkitRelativePath || file?.name || "";
+                const folderName = relative.split("/")[0] || "已选择地址";
+                setForm((current) => ({ ...current, name: current.name || folderName }));
+                setBrowserPickNote(`浏览器只提供目录名“${folderName}”，不会暴露真实绝对路径；因此本轮不会伪造地址。`);
+              }}
+            />
+            <div className="rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground">
+              <div className="font-medium text-foreground">已登记地址</div>
+              <div className="mt-1 break-all font-mono">{form.rootPath || "未登记"}</div>
+            </div>
+            {browserPickNote ? <InlineState tone="empty" text={browserPickNote} /> : null}
+          </div>
+          <div className="rounded-md border border-red-300/40 bg-red-50 p-3 text-sm leading-6 text-red-800">
+            删除项目只会移除工作台登记和本页保存的最近索引状态，不会删除磁盘目录。
           </div>
         </div>
         <DialogFooter>
-          <Button
-            variant="ghost"
-            className="text-red-200 hover:text-red-100"
-            disabled={!project || deleteProject.isPending}
-            onClick={() => deleteProject.mutate()}
-          >
-            {deleteProject.isPending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-            删除登记
-          </Button>
+          {!hideDelete ? (
+            <Button
+              variant="ghost"
+              className="text-red-700 hover:bg-red-50 hover:text-red-800"
+              disabled={!project || deleteProject.isPending}
+              onClick={() => deleteProject.mutate()}
+            >
+              {deleteProject.isPending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              删除登记
+            </Button>
+          ) : null}
           <DialogClose asChild><Button variant="ghost">取消</Button></DialogClose>
           <Button onClick={() => updateProject.mutate()} disabled={!project || updateProject.isPending}>
             {updateProject.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
@@ -562,6 +797,52 @@ function ProjectSettingsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProjectDeleteButton({
+  project,
+  selected,
+  onSelectProject,
+  onNotice,
+}: {
+  project: Project;
+  selected: boolean;
+  onSelectProject: (projectId: string) => void;
+  onNotice: (message: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const deleteProject = useMutation({
+    mutationFn: async () => {
+      const confirmed = window.confirm(`删除项目登记“${project.name}”？本地文件不会被删除。`);
+      if (!confirmed) throw new Error("已取消删除。");
+      return api.deleteProject(project.id);
+    },
+    onSuccess: () => {
+      clearProjectLocalState(project.id);
+      if (selected) onSelectProject("");
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-sources"] });
+      onNotice("项目登记已删除，本地项目文件不会被删除。");
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "项目删除失败。";
+      if (message !== "已取消删除。") onNotice(message);
+    },
+  });
+
+  return (
+    <Button
+      type="button"
+      size="icon"
+      variant="destructive"
+      className="size-8"
+      disabled={deleteProject.isPending}
+      aria-label={`删除 ${project.name}`}
+      onClick={() => deleteProject.mutate()}
+    >
+      {deleteProject.isPending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+    </Button>
   );
 }
 
@@ -661,7 +942,7 @@ function EvidenceCoveragePanel({ coverage, loading }: { coverage?: ProjectEviden
     <section className="rounded-lg border border-border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <div className={cn("grid size-10 shrink-0 place-items-center rounded-md border", stats.missing ? "border-amber-400/25 bg-amber-400/10 text-amber-200" : "border-emerald-400/25 bg-emerald-400/10 text-emerald-200")}>
+          <div className={cn("grid size-10 shrink-0 place-items-center rounded-md border", stats.missing ? "border-amber-400/25 bg-amber-400/10 text-amber-800" : "border-emerald-400/25 bg-emerald-400/10 text-emerald-800")}>
             <Database className="size-5" />
           </div>
           <div className="min-w-0">
@@ -789,7 +1070,7 @@ function SupportingDocumentQualityPanel({ quality, documents }: { quality?: Cont
           <FileSearch className="mt-0.5 size-5 text-muted-foreground" />
           <div>
             <h3 className="font-semibold">辅助文档完整度</h3>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">生成上下文后，这里会显示 `.ai` 生成/人工文档是否可作为辅助说明。</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">这里会显示 `.ai` 生成/人工文档是否可作为辅助说明。</p>
           </div>
         </div>
       </section>
@@ -850,7 +1131,7 @@ function SupportingDocumentQualityPanel({ quality, documents }: { quality?: Cont
           ))}
         </div>
       ) : (
-        <div className="mt-5 rounded-md border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+        <div className="mt-5 rounded-md border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-800">
           当前辅助文档没有发现缺失或 TODO，可作为原始证据之外的概览和人工备注。
         </div>
       )}
@@ -1240,7 +1521,7 @@ function ReviewSourcePicker({
 
   if (error) {
     return (
-      <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100">
+      <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm leading-6 text-amber-800">
         Git 状态读取失败。仍可在高级审查来源中手动填写分支或粘贴 diff。
       </div>
     );
@@ -1282,7 +1563,7 @@ function ReviewSourcePicker({
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">{source.description}</p>
                   <p className="mt-1 break-words text-xs text-muted-foreground">{source.reason}</p>
                   {source.warning ? (
-                    <p className="mt-2 rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs leading-5 text-amber-100">
+                    <p className="mt-2 rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs leading-5 text-amber-800">
                       {source.warning}
                     </p>
                   ) : null}
@@ -1495,9 +1776,9 @@ function ReviewResultPanel({
           <CardDescription>{detail ? detail.review.summary || "结构化 ReviewIssue" : "提交审查后显示问题列表。"}</CardDescription>
         </div>
         {detail?.review.runId ? (
-          <Button variant="secondary" onClick={() => onOpenRun(detail.review.runId as number)}>
+          <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => onOpenRun(detail.review.runId as number)}>
             <Activity className="size-4" />
-            查看追踪
+            追踪
           </Button>
         ) : null}
       </CardHeader>
@@ -1642,7 +1923,7 @@ function ReviewMemoryInventoryPanel({
         ) : loading ? (
           <EmptyState text="正在加载反馈记忆。" />
         ) : error ? (
-          <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100">
+          <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm leading-6 text-amber-800">
             反馈记忆加载失败。请确认后端已包含 inventory API。
           </div>
         ) : items.length === 0 ? (
@@ -2107,9 +2388,9 @@ function DecisionWorkspace({
               <CardDescription>{adviceResult ? `Reuse Record #${adviceResult.reuseRecordId}` : "检索结果和复用建议会显示在这里。"}</CardDescription>
             </div>
             {adviceResult?.runId ? (
-              <Button variant="secondary" onClick={() => onOpenRun(adviceResult.runId)}>
+              <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => onOpenRun(adviceResult.runId)}>
                 <Activity className="size-4" />
-                查看追踪
+                追踪
               </Button>
             ) : null}
           </CardHeader>
@@ -2283,220 +2564,127 @@ function CreateDecisionDialog({ project, onNotice }: { project: Project | null; 
 }
 
 function KnowledgeWorkspace({
+  project,
   sources,
+  settings,
   onNotice,
   onOpenRun,
 }: {
+  project: Project | null;
   sources: KnowledgeSource[];
+  settings?: LlmSettings;
   onNotice: (message: string) => void;
   onOpenRun: (runId: number) => void;
 }) {
-  const queryClient = useQueryClient();
-  const [sourceForm, setSourceForm] = useState({ name: "life-service AI Docs", rootPath: lifeServicePath, sourceType: "project_ai_docs" });
-  const [askForm, setAskForm] = useState({ sourceId: "", query: "这个项目的核心流程是什么？", topK: "5" });
-  const [searchResult, setSearchResult] = useState<KnowledgeSearchResponse | null>(null);
+  const projectSource = useMemo(() => findKnowledgeSourceForProject(sources, project), [sources, project?.rootPath]);
+  const [query, setQuery] = useState("SourceEvidenceLoop 是怎么选择 primary evidence 的？");
   const [answerResult, setAnswerResult] = useState<RagAnswerResult | null>(null);
-  const [indexResult, setIndexResult] = useState<KnowledgeIndexResult | null>(null);
-  const [indexingSourceId, setIndexingSourceId] = useState<number | null>(null);
-  const [lastIndexedAt, setLastIndexedAt] = useState<string | null>(null);
+  const [askStage, setAskStage] = useState<AskStage>("idle");
+  const askStageTimers = useRef<number[]>([]);
+  const sourceReady = projectSource?.status === "indexed";
+  const queryReady = query.trim().length > 0 && Boolean(project) && sourceReady;
 
-  const createSource = useMutation({
-    mutationFn: () => api.createSource(sourceForm),
-    onSuccess: (source) => {
-      setAskForm((current) => ({ ...current, sourceId: String(source.id) }));
-      void queryClient.invalidateQueries({ queryKey: ["knowledge-sources"] });
-      onNotice("知识源已添加。");
-    },
-    onError: (error) => onNotice(error instanceof Error ? error.message : "知识源创建失败。"),
-  });
+  function clearAskStageTimers() {
+    askStageTimers.current.forEach((timer) => window.clearTimeout(timer));
+    askStageTimers.current = [];
+  }
 
-  const indexSource = useMutation({
-    mutationFn: (sourceId: number) => api.indexSource(sourceId),
-    onMutate: (sourceId) => {
-      setIndexingSourceId(sourceId);
-      setIndexResult(null);
-      setSearchResult(null);
-      setAnswerResult(null);
-      onNotice("开始索引知识源，正在扫描文件并写入检索片段。");
-    },
-    onSuccess: (data, sourceId) => {
-      setIndexResult(data);
-      setLastIndexedAt(new Date().toISOString());
-      setAskForm((current) => (current.sourceId ? current : { ...current, sourceId: String(sourceId) }));
-      void queryClient.invalidateQueries({ queryKey: ["knowledge-sources"] });
-      onNotice(`索引完成：${data.documentsIndexed} 个文档，${data.chunksIndexed} 个片段。`);
-    },
-    onError: (error) => onNotice(error instanceof Error ? error.message : "索引失败。"),
-    onSettled: () => setIndexingSourceId(null),
-  });
-
-  const search = useMutation({
-    mutationFn: () =>
-      api.searchKnowledge({
-        query: askForm.query,
-        sourceId: asNumberOrNull(askForm.sourceId),
-        topK: asNumberOrNull(askForm.topK) ?? 5,
-      }),
-    onSuccess: (data) => {
-      setSearchResult(data);
-      setAnswerResult(null);
-    },
-    onError: (error) => onNotice(error instanceof Error ? error.message : "知识库检索失败。"),
-  });
+  useEffect(() => clearAskStageTimers, []);
 
   const ask = useMutation({
     mutationFn: () =>
       api.askKnowledge({
-        query: askForm.query,
-        sourceId: asNumberOrNull(askForm.sourceId),
-        topK: asNumberOrNull(askForm.topK) ?? 5,
+        query,
+        sourceId: projectSource?.id ?? null,
+        topK: 5,
       }),
-    onSuccess: (data) => {
-      setAnswerResult(data);
-      setSearchResult(null);
+    onMutate: () => {
+      clearAskStageTimers();
+      setAnswerResult(null);
+      setAskStage("understanding");
+      askStageTimers.current = [
+        window.setTimeout(() => setAskStage("evidence"), 650),
+        window.setTimeout(() => setAskStage("answering"), 1500),
+      ];
     },
-    onError: (error) => onNotice(error instanceof Error ? error.message : "知识库问答失败。"),
+    onSuccess: (data) => {
+      clearAskStageTimers();
+      setAnswerResult(data);
+      const evaluation = data.evidenceEvaluation;
+      setAskStage(evaluation?.noAnswerRequired || evaluation?.sufficient === false ? "insufficient" : "completed");
+    },
+    onError: (error) => {
+      clearAskStageTimers();
+      setAskStage("error");
+      onNotice(error instanceof Error ? error.message : "知识库问答失败。");
+    },
   });
 
+  const requestPending = ask.isPending;
+  const requestError = mutationErrorMessage(ask.error);
+  const examples = [
+    "SourceEvidenceLoop 是怎么选择 primary evidence 的？",
+    "SourceEvidenceLoop 的测试在哪里？",
+    "LLM provider/client 是在哪里配置的？",
+    "Knowledge RAG 如何记录 retrieval trace？",
+    "这个项目是否支持一个完全不存在的能力？",
+  ];
+
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-5">
-      <Card className="min-w-0 overflow-hidden">
-        <CardHeader>
-          <div>
-            <CardTitle>知识源</CardTitle>
-            <CardDescription>把 Markdown、AI 资产和项目代码证据变成可检索知识。</CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createSource.mutate();
-            }}
-          >
-            <div className="grid grid-cols-2 gap-3 max-lg:grid-cols-1">
-              <Label className="min-w-0">
-                名称
-                <Input value={sourceForm.name} onChange={(event) => setSourceForm({ ...sourceForm, name: event.target.value })} />
-              </Label>
-              <Label className="min-w-0">
-                类型
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  value={sourceForm.sourceType}
-                  onChange={(event) => setSourceForm({ ...sourceForm, sourceType: event.target.value })}
-                >
-                  <option value="project_ai_docs">项目 AI 资产 + 代码证据</option>
-                  <option value="markdown_dir">Markdown 目录</option>
-                </select>
-              </Label>
-            </div>
-            <Label className="min-w-0">
-              根路径
-              <Input value={sourceForm.rootPath} onChange={(event) => setSourceForm({ ...sourceForm, rootPath: event.target.value })} />
-            </Label>
-            <div className="flex flex-wrap gap-2">
-              <Button disabled={createSource.isPending}>
-                {createSource.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-                添加知识源
-              </Button>
-              <Button type="button" variant="secondary" onClick={() => setSourceForm({ name: "DevContext Docs", rootPath: "D:\\CodeX\\DevContext\\docs", sourceType: "markdown_dir" })}>
-                填入 DevContext docs
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card className="min-w-0 overflow-hidden">
-        <CardHeader>
-          <CardTitle>来源列表</CardTitle>
-          <CardDescription>{sources.length} 个知识源。</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-2">
-          {sources.length === 0 ? (
-            <EmptyState text="还没有知识源。" />
-          ) : (
-            sources.map((source) => (
-              <div key={source.id} className="min-w-0 rounded-lg border border-border bg-background p-3">
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <Badge variant="secondary">Source #{source.id}</Badge>
-                      <div className="min-w-0 break-words font-medium">{source.name}</div>
-                    </div>
-                    <div className="mt-1 break-all font-mono text-xs leading-5 text-muted-foreground">{source.rootPath}</div>
-                  </div>
-                  <Badge variant={source.status === "indexed" ? "success" : "warning"}>{source.status ?? source.sourceType}</Badge>
-                </div>
-                <KnowledgeIndexStatus
-                  source={source}
-                  indexing={indexingSourceId === source.id}
-                  indexResult={indexResult?.sourceId === source.id ? indexResult : null}
-                  indexedAt={indexResult?.sourceId === source.id ? lastIndexedAt : null}
-                />
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" variant="secondary" disabled={indexSource.isPending} onClick={() => indexSource.mutate(source.id)}>
-                    {indexingSourceId === source.id ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                    {indexingSourceId === source.id ? "索引中" : "索引"}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setAskForm((current) => ({ ...current, sourceId: String(source.id) }))}>选择</Button>
-                </div>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
-
+    <div className="mx-auto grid w-full max-w-5xl gap-5">
       <Card className="min-w-0 overflow-hidden">
         <CardHeader>
           <div>
             <CardTitle>知识问答</CardTitle>
-            <CardDescription>答案需要带可检查的来源片段。</CardDescription>
+            <CardDescription>{project ? `${project.name} · ${projectSource?.status ?? "未索引"}` : "先在首页选择项目并建立索引。"}</CardDescription>
           </div>
           {answerResult?.runId ? (
-            <Button variant="secondary" onClick={() => onOpenRun(answerResult.runId)}>
+            <Button size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => onOpenRun(answerResult.runId)}>
               <Activity className="size-4" />
-              查看追踪
+              追踪
             </Button>
           ) : null}
         </CardHeader>
         <CardContent className="grid gap-4">
-          <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-3 max-md:grid-cols-1">
-            <Label className="min-w-0">
-              知识源
-              <select
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={askForm.sourceId}
-                onChange={(event) => setAskForm({ ...askForm, sourceId: event.target.value })}
-              >
-                <option value="">全部来源</option>
-                {sources.map((source) => (
-                  <option key={source.id} value={source.id}>{source.name}</option>
-                ))}
-              </select>
-            </Label>
-            <Label className="min-w-0">TopK<Input value={askForm.topK} onChange={(event) => setAskForm({ ...askForm, topK: event.target.value })} /></Label>
-          </div>
+          {!project ? <InlineState tone="empty" text="未选择项目。请回到首页选择项目。" /> : null}
+          {project && !sourceReady ? <InlineState tone="empty" text="当前项目还没有完成索引。请回到首页建立或刷新索引。" /> : null}
           <Label className="min-w-0">
             问题
-            <Textarea className="min-h-28" value={askForm.query} onChange={(event) => setAskForm({ ...askForm, query: event.target.value })} />
+            <Textarea className="min-h-32 bg-card text-base leading-7" value={query} onChange={(event) => setQuery(event.target.value)} />
           </Label>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => ask.mutate()} disabled={ask.isPending}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
+              {examples.map((item) => (
+                <Button key={item} type="button" size="sm" variant="secondary" onClick={() => setQuery(item)}>
+                  {item}
+                </Button>
+              ))}
+            </div>
+            <Button onClick={() => ask.mutate()} disabled={!queryReady || requestPending}>
               {ask.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
               生成答案
             </Button>
-            <Button variant="secondary" onClick={() => search.mutate()} disabled={search.isPending}>
-              {search.isPending ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-              只检索
-            </Button>
           </div>
+          <div className="grid gap-2 rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground md:grid-cols-3">
+            <StateLine label="project" value={project?.name ?? "未选择"} />
+            <StateLine label="source" value={projectSource ? `${projectSource.name} (#${projectSource.id})` : "未建立"} />
+            <StateLine label="model" value={settings ? `${settings.provider} / ${settings.model}` : "-"} />
+          </div>
+          {requestPending ? (
+            <QuestionProgress stage={askStage} />
+          ) : requestError ? (
+            <InlineState tone="error" text={requestError} />
+          ) : null}
         </CardContent>
       </Card>
 
-      <KnowledgeResult answer={answerResult} search={searchResult} indexResult={indexResult} indexedAt={lastIndexedAt} />
+      <KnowledgeResult
+        answer={answerResult}
+        loading={requestPending}
+        loadingStage={askStage}
+        error={requestError}
+        providerModel={settings ? `${settings.provider} / ${settings.model}` : null}
+      />
     </div>
   );
 }
@@ -2504,11 +2692,11 @@ function KnowledgeWorkspace({
 function MetricTile({ label, value, tone }: { label: string; value: ReactNode; tone?: "success" | "warning" | "danger" }) {
   const toneClass =
     tone === "success"
-      ? "text-emerald-200"
+      ? "text-emerald-800"
       : tone === "warning"
-        ? "text-amber-200"
+        ? "text-amber-800"
         : tone === "danger"
-          ? "text-red-200"
+          ? "text-red-800"
           : "text-foreground";
   return (
     <div className="rounded-lg border border-border bg-background p-4">
@@ -2543,7 +2731,7 @@ function CoverageWarnings({ warnings }: { warnings: string[] }) {
   return (
     <div className="mt-3 grid gap-2">
       {warnings.map((warning) => (
-        <div key={warning} className="flex min-w-0 items-start gap-2 rounded-md border border-amber-400/20 bg-amber-400/10 p-2 text-xs leading-5 text-amber-100">
+        <div key={warning} className="flex min-w-0 items-start gap-2 rounded-md border border-amber-700/20 bg-amber-600/10 p-2 text-xs leading-5 text-amber-800">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <span className="min-w-0 break-words">{warning}</span>
         </div>
@@ -2590,10 +2778,10 @@ function KnowledgeIndexStatus({
     return null;
   }
   return (
-    <div className="mt-3 rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3">
+    <div className="mt-3 rounded-lg border border-emerald-700/20 bg-emerald-700/8 p-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <CheckCircle2 className="size-4 text-emerald-200" />
-        <span className="font-medium text-emerald-100">索引完成</span>
+        <CheckCircle2 className="size-4 text-emerald-800" />
+        <span className="font-medium text-emerald-800">索引完成</span>
         <Badge variant="success">{indexResult.documentsIndexed} 文档</Badge>
         <Badge variant="success">{indexResult.chunksIndexed} 片段</Badge>
         {indexedAt ? <span className="text-xs text-muted-foreground">{formatTime(indexedAt)}</span> : null}
@@ -2606,41 +2794,220 @@ function KnowledgeIndexStatus({
 
 function KnowledgeResult({
   answer,
-  search,
-  indexResult,
-  indexedAt,
+  loading,
+  loadingStage,
+  error,
+  providerModel,
 }: {
   answer: RagAnswerResult | null;
-  search: KnowledgeSearchResponse | null;
-  indexResult: KnowledgeIndexResult | null;
-  indexedAt: string | null;
+  loading: boolean;
+  loadingStage: AskStage;
+  error: string | null;
+  providerModel: string | null;
 }) {
-  const queryPlan = answer?.queryPlan ?? search?.queryPlan ?? null;
+  const queryPlan = answer?.queryPlan ?? null;
+  const citations = answer?.citations ?? [];
   return (
     <Card className="min-w-0 overflow-hidden">
       <CardHeader>
-        <CardTitle>结果</CardTitle>
-        <CardDescription>{answer ? `Retrieval #${answer.retrievalRecordId}` : search ? `Retrieval #${search.retrievalRecordId}` : indexResult ? `Source #${indexResult.sourceId}` : "答案和引用会显示在这里。"}</CardDescription>
+        <CardTitle>Answer</CardTitle>
+        <CardDescription>{answer ? `Run #${answer.runId} · Retrieval #${answer.retrievalRecordId}` : "答案和引用会显示在这里。"}</CardDescription>
       </CardHeader>
       <CardContent>
-        {answer ? (
-          <div className="grid gap-4">
-            <QueryPlanPanel plan={queryPlan} />
-            <pre className="max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-4 text-sm leading-6">{answer.answer}</pre>
-            <CitationList citations={answer.citations} />
+        {loading ? (
+          <QuestionProgress stage={loadingStage} compact />
+        ) : error ? (
+          <InlineState tone="error" text={error} />
+        ) : answer ? (
+          <div className="grid gap-5">
+            <AnswerBlock answer={answer.answer} evaluation={answer.evidenceEvaluation ?? null} citationCount={citations.length} />
+            <CitationList citations={citations} />
+            <details className="rounded-lg border border-border bg-muted p-4">
+              <summary className="cursor-pointer text-sm font-medium text-foreground">Trace / Evidence details</summary>
+              <div className="mt-4 grid gap-4">
+                <ResultTracePanel
+                  runId={answer.runId}
+                  retrievalRecordId={answer.retrievalRecordId}
+                  query={answer.query}
+                  rewrittenQuery={answer.rewrittenQuery}
+                  citationCount={citations.length}
+                  providerModel={providerModel}
+                />
+                <QueryPlanPanel plan={queryPlan} />
+                <EvidenceEvaluationPanel evaluation={answer.evidenceEvaluation ?? null} />
+              </div>
+            </details>
           </div>
-        ) : search ? (
-          <div className="grid gap-4">
-            <QueryPlanPanel plan={queryPlan} />
-            <CitationList citations={search.results} />
-          </div>
-        ) : indexResult ? (
-          <KnowledgeIndexResultPanel result={indexResult} indexedAt={indexedAt} />
         ) : (
           <EmptyState text="还没有知识库结果。" />
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function QuestionProgress({ stage, compact = false }: { stage: AskStage; compact?: boolean }) {
+  const steps: Array<{ id: AskStage; label: string }> = [
+    { id: "understanding", label: "正在理解问题" },
+    { id: "evidence", label: "正在选择证据" },
+    { id: "answering", label: "正在生成回答" },
+  ];
+  const activeIndex = Math.max(0, steps.findIndex((step) => step.id === stage));
+
+  return (
+    <div className={cn("rounded-lg border border-primary/25 bg-primary/10", compact ? "p-3" : "p-4")}>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        {steps.map((step, index) => {
+          const active = index === activeIndex;
+          const done = index < activeIndex;
+          return (
+            <div key={step.id} className="flex min-w-0 items-center gap-2 text-sm">
+              <span
+                className={cn(
+                  "grid size-5 shrink-0 place-items-center rounded-full border text-[11px]",
+                  done && "border-emerald-300 bg-emerald-50 text-emerald-800",
+                  active && "border-primary bg-card text-primary",
+                  !done && !active && "border-border bg-muted text-muted-foreground",
+                )}
+              >
+                {done ? "✓" : active ? <Loader2 className="size-3 animate-spin" /> : index + 1}
+              </span>
+              <span className={cn("whitespace-nowrap", active ? "text-foreground" : "text-muted-foreground")}>{step.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ResultTracePanel({
+  runId,
+  retrievalRecordId,
+  query,
+  rewrittenQuery,
+  citationCount,
+  providerModel,
+}: {
+  runId?: number | null;
+  retrievalRecordId: number;
+  query: string;
+  rewrittenQuery: string;
+  citationCount: number;
+  providerModel?: string | null;
+}) {
+  return (
+    <div className="grid gap-3 rounded-lg border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <StateLine label="retrieval" value={`#${retrievalRecordId}`} />
+      <StateLine label="run" value={runId ? `#${runId}` : "search only"} />
+      <Badge variant={citationCount ? "success" : "warning"}>{citationCount} citations</Badge>
+      <div className="min-w-0 md:col-span-3">
+        <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+          <div className="min-w-0 break-words">provider/model：{providerModel ?? "-"}</div>
+          <div className="min-w-0 break-words">输入问题：{query}</div>
+          <div className="min-w-0 break-words">检索问题：{rewrittenQuery || query}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EvidenceEvaluationPanel({ evaluation }: { evaluation: EvidenceEvaluation | null }) {
+  if (!evaluation) return null;
+  const missingRequired = evaluation.missingRequiredEvidenceTypes ?? [];
+  const weakReasons = evaluation.weakEvidenceReasons ?? [];
+  const reasons = evaluation.reasons ?? [];
+  const assessments = evaluation.citationAssessments ?? [];
+  return (
+    <div className={cn("rounded-lg border p-4", evidenceEvaluationToneClass(evaluation))}>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <Badge variant={evidenceEvaluationBadge(evaluation)}>{evidenceEvaluationLabel(evaluation)}</Badge>
+        <Badge variant="secondary">{evaluation.status || "unknown"}</Badge>
+        <Badge variant="secondary">{evaluation.answerGuardDecision || "guard pending"}</Badge>
+        <Badge variant={evaluation.sufficient ? "success" : "warning"}>
+          {evaluation.sufficient ? "evidence sufficient" : "insufficient evidence"}
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <EvidenceTypeSummary title="required" types={evaluation.requiredEvidenceTypes ?? []} matched={evaluation.matchedRequiredEvidenceTypes ?? []} />
+        <EvidenceTypeSummary title="observed" types={evaluation.observedEvidenceTypes ?? []} />
+      </div>
+      {missingRequired.length ? (
+        <EvidenceTypeRow title="缺失" types={missingRequired} />
+      ) : null}
+      {reasons.length || weakReasons.length ? (
+        <div className="mt-3 grid gap-2 text-xs leading-5 text-muted-foreground">
+          {[...reasons, ...weakReasons].slice(0, 5).map((reason) => (
+            <div key={reason} className="min-w-0 break-words">{reason}</div>
+          ))}
+        </div>
+      ) : null}
+      {assessments.length ? (
+        <div className="mt-3 grid gap-2">
+          {assessments.slice(0, 4).map((assessment) => (
+            <div key={`${assessment.citationIndex}-${assessment.sourcePath}`} className="rounded-md border border-border bg-background/80 p-3 text-xs">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Badge variant={assessment.weakEvidence ? "warning" : "success"}>citation #{assessment.citationIndex + 1}</Badge>
+                <span className="min-w-0 break-all font-mono text-muted-foreground">{assessment.sourcePath}</span>
+              </div>
+              <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+                {(assessment.sourceReliabilities ?? []).map((item) => (
+                  <Badge key={item} variant={item === "primary" ? "success" : "secondary"}>{sourceReliabilityLabel(item)}</Badge>
+                ))}
+                {(assessment.sourceKinds ?? []).slice(0, 4).map((item) => (
+                  <Badge key={item} variant="secondary">{sourceKindLabel(item)}</Badge>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EvidenceTypeSummary({ title, types, matched = [] }: { title: string; types: KnowledgeEvidenceType[]; matched?: KnowledgeEvidenceType[] }) {
+  return (
+    <div className="min-w-0 rounded-md border border-border bg-background/80 p-3">
+      <div className="text-xs font-medium text-muted-foreground">{title}</div>
+      <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+        {types.length ? types.map((type) => (
+          <Badge key={type} variant={matched.includes(type) ? "success" : "secondary"}>{evidenceTypeLabel(type)}</Badge>
+        )) : <span className="text-xs text-muted-foreground">none</span>}
+      </div>
+    </div>
+  );
+}
+
+function AnswerBlock({ answer, evaluation, citationCount }: { answer: string; evaluation: EvidenceEvaluation | null; citationCount: number }) {
+  const noAnswer = Boolean(evaluation?.noAnswerRequired || (evaluation && !evaluation.sufficient));
+  return (
+    <div className={cn("rounded-md border p-5", noAnswer ? "border-amber-700/20 bg-amber-600/10" : "border-border bg-card")}>
+      <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+        <Badge variant={noAnswer ? "warning" : "success"}>{noAnswer ? "no-answer guard" : "answer"}</Badge>
+        <Badge variant={citationCount ? "success" : "warning"}>{citationCount} source paths</Badge>
+      </div>
+      <div className="markdown-answer">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {answer || "证据不足，未生成可采信答案。"}
+        </ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+function InlineState({ tone, text }: { tone: "loading" | "error" | "empty"; text: string }) {
+  const toneClass =
+    tone === "loading"
+      ? "border-primary/25 bg-primary/10 text-primary"
+      : tone === "error"
+        ? "border-red-700/20 bg-red-700/10 text-red-800"
+        : "border-border bg-background text-muted-foreground";
+  return (
+    <div className={cn("flex min-w-0 items-start gap-3 rounded-lg border p-4 text-sm", toneClass)}>
+      {tone === "loading" ? <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" /> : tone === "error" ? <AlertTriangle className="mt-0.5 size-4 shrink-0" /> : <FileSearch className="mt-0.5 size-4 shrink-0" />}
+      <span className="min-w-0 break-words">{text}</span>
+    </div>
   );
 }
 
@@ -2655,7 +3022,7 @@ function KnowledgeIndexResultPanel({ result, indexedAt }: { result: KnowledgeInd
       </div>
       <div className="rounded-lg border border-border bg-background p-4">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <CheckCircle2 className="size-4 text-emerald-200" />
+          <CheckCircle2 className="size-4 text-emerald-800" />
           <div className="font-medium">Source #{result.sourceId} 已完成索引</div>
           <Badge variant={warnings.length ? "warning" : "success"}>{warnings.length ? `${warnings.length} 条提醒` : "覆盖正常"}</Badge>
         </div>
@@ -2697,25 +3064,36 @@ function QueryPlanPanel({ plan }: { plan: KnowledgeQueryPlan | null }) {
 
 function CitationList({ citations }: { citations: RagAnswerResult["citations"] }) {
   if (citations.length === 0) {
-    return <EmptyState text="没有召回引用片段。" />;
+    return <InlineState tone="empty" text="没有召回引用片段，可作为 no-answer 或检索范围不足的验收状态。" />;
   }
   return (
-    <div className="grid gap-3">
-      {citations.map((citation) => (
-        <article key={citation.chunkId} className="min-w-0 rounded-lg border border-border bg-background p-4">
+    <section className="grid gap-3">
+      <div>
+        <h3 className="text-sm font-semibold">Sources</h3>
+        <p className="mt-1 text-sm text-muted-foreground">引用路径单独展示，便于核验答案来源。</p>
+      </div>
+      {citations.map((citation, index) => (
+        <article key={citation.chunkId} className="min-w-0 rounded-lg border border-border bg-card p-4">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge variant="default">S{index + 1}</Badge>
             <Badge variant="success">score {round(citation.fusedScore)}</Badge>
+            <Badge variant="secondary">keyword {round(citation.keywordScore)}</Badge>
+            <Badge variant="secondary">vector {round(citation.vectorScore)}</Badge>
             {(citation.evidenceTypes ?? []).slice(0, 4).map((type) => (
               <Badge key={type} variant="secondary">{evidenceTypeLabel(type)}</Badge>
             ))}
-            <span className="min-w-0 break-words font-medium">{citation.title}</span>
-            <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{citation.filePath}</span>
+            <span className="min-w-0 break-words font-medium">{citation.title || citation.sourceName}</span>
           </div>
-          <div className="mt-2 break-words text-xs text-muted-foreground">{citation.headingPath}</div>
+          <div className="mt-3 grid gap-2 rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground md:grid-cols-2">
+            <StateLine label="source" value={`${citation.sourceName} (#${citation.sourceId})`} />
+            <StateLine label="chunk" value={`document #${citation.documentId} · chunk #${citation.chunkId}`} />
+            <div className="min-w-0 break-all font-mono md:col-span-2">{citation.filePath}</div>
+            {citation.headingPath ? <div className="min-w-0 break-words md:col-span-2">{citation.headingPath}</div> : null}
+          </div>
           <p className="mt-3 line-clamp-4 break-words text-sm leading-6 text-muted-foreground">{citation.content}</p>
         </article>
       ))}
-    </div>
+    </section>
   );
 }
 
@@ -2975,7 +3353,7 @@ function SettingsWorkspace({
           <CardContent className="grid gap-4">
             <div className="rounded-lg border border-border bg-background p-4">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <CheckCircle2 className="size-4 text-emerald-200" />
+                <CheckCircle2 className="size-4 text-emerald-800" />
                 当前生效
               </div>
               <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
@@ -2994,7 +3372,7 @@ function SettingsWorkspace({
             )}>
               <div className="flex items-center gap-2 text-sm font-medium">
                 {settings?.restartRequired ? (
-                  <AlertTriangle className="size-4 text-amber-200" />
+                  <AlertTriangle className="size-4 text-amber-800" />
                 ) : (
                   <ShieldCheck className="size-4 text-sky-200" />
                 )}
@@ -3012,7 +3390,7 @@ function SettingsWorkspace({
                 <p className="mt-3 text-sm text-muted-foreground">没有待重启生效的本地 LLM 配置。</p>
               )}
               {settings?.restartRequired ? (
-                <div className="mt-3 rounded-md border border-amber-400/25 bg-background px-3 py-2 text-sm text-amber-100">
+                <div className="mt-3 rounded-md border border-amber-400/25 bg-background px-3 py-2 text-sm text-amber-800">
                   重启 backend 后生效。
                 </div>
               ) : null}
@@ -3046,9 +3424,9 @@ function LlmConnectionCheckResultPanel({
           {loading ? (
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           ) : success ? (
-            <CheckCircle2 className="size-4 text-emerald-200" />
+            <CheckCircle2 className="size-4 text-emerald-800" />
           ) : (
-            <AlertTriangle className="size-4 text-red-200" />
+            <AlertTriangle className="size-4 text-red-800" />
           )}
           连接测试
         </div>
@@ -3243,7 +3621,7 @@ function RunWorkspace({ initialRunId, project }: { initialRunId: number | null; 
                     <div className="font-mono text-sm font-semibold">{event.eventType}</div>
                     <div className="mt-1 text-sm text-muted-foreground">{event.inputSummary}</div>
                     <div className="mt-1 text-sm">{event.outputSummary}</div>
-                    {event.errorMessage ? <div className="mt-2 text-sm text-red-200">{event.errorMessage}</div> : null}
+                    {event.errorMessage ? <div className="mt-2 text-sm text-red-800">{event.errorMessage}</div> : null}
                   </div>
                 </div>
               ))}
@@ -3275,7 +3653,7 @@ function RunHistoryItem({ run, active, onOpen }: { run: AgentRun; active: boolea
         {run.modelName ? <Badge variant="secondary">{run.modelName}</Badge> : null}
         {typeof run.durationMs === "number" ? <Badge variant="secondary">{run.durationMs} ms</Badge> : null}
       </div>
-      {run.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-red-200">{run.errorMessage}</p> : null}
+      {run.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-red-800">{run.errorMessage}</p> : null}
     </button>
   );
 }
@@ -3283,13 +3661,17 @@ function RunHistoryItem({ run, active, onOpen }: { run: AgentRun; active: boolea
 function ImportProjectDialog({
   onSelectProject,
   onNotice,
+  label = "导入项目",
 }: {
   onSelectProject: (projectId: string) => void;
   onNotice: (message: string) => void;
+  label?: string;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "life-service", rootPath: lifeServicePath, defaultBranch: "main" });
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
+  const [form, setForm] = useState({ name: "", rootPath: "", defaultBranch: "main" });
+  const [browserPickNote, setBrowserPickNote] = useState<string | null>(null);
 
   const create = useMutation({
     mutationFn: () => api.createProject(form),
@@ -3307,26 +3689,50 @@ function ImportProjectDialog({
       <DialogTrigger asChild>
         <Button variant="secondary">
           <Plus className="size-4" />
-          导入项目
+          {label}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>导入本地项目</DialogTitle>
-          <DialogDescription>保存项目路径和默认分支。</DialogDescription>
+          <DialogDescription>填写名称，然后通过地址选择入口准备项目位置；默认不内置任何示例项目。</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <Label>名称<Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></Label>
-          <Label>本地路径<Input value={form.rootPath} onChange={(event) => setForm({ ...form, rootPath: event.target.value })} /></Label>
-          <Label>默认分支<Input value={form.defaultBranch} onChange={(event) => setForm({ ...form, defaultBranch: event.target.value })} /></Label>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="secondary" onClick={() => setForm({ name: "life-service", rootPath: lifeServicePath, defaultBranch: "main" })}>life-service</Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => setForm({ name: "DevContext", rootPath: devContextPath, defaultBranch: "main" })}>DevContext</Button>
+            <Button type="button" variant="secondary" onClick={() => directoryInputRef.current?.click()}>
+              <FileSearch className="size-4" />
+              选择地址
+            </Button>
           </div>
+          <input
+            ref={directoryInputRef}
+            type="file"
+            className="hidden"
+            multiple
+            {...{ webkitdirectory: "", directory: "" }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              const relative = file?.webkitRelativePath || file?.name || "";
+              const folderName = relative.split("/")[0] || "已选择地址";
+              setForm((current) => ({ ...current, name: current.name || folderName, rootPath: "" }));
+              setBrowserPickNote(`浏览器只提供目录名“${folderName}”，不会暴露真实绝对路径；因此本轮不会伪造地址。已有项目可继续从顶部列表选择。`);
+            }}
+          />
+          {form.rootPath ? (
+            <div className="rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground">
+              <div className="font-medium text-foreground">已选择地址</div>
+              <div className="mt-1 break-all font-mono">{form.rootPath}</div>
+            </div>
+          ) : null}
+          {browserPickNote ? <InlineState tone="empty" text={browserPickNote} /> : null}
         </div>
         <DialogFooter>
           <DialogClose asChild><Button variant="ghost">取消</Button></DialogClose>
-          <Button onClick={() => create.mutate()} disabled={create.isPending}>保存</Button>
+          <Button onClick={() => create.mutate()} disabled={create.isPending || !form.name.trim() || !form.rootPath}>
+            {create.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+            保存
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -3370,7 +3776,7 @@ function Metric({ label, value, tone }: { label: string; value: string; tone: "g
   return (
     <div className="rounded-md border border-border bg-background p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={cn("mt-2 text-2xl font-semibold", tone === "good" && "text-emerald-200", tone === "warn" && "text-amber-200", tone === "bad" && "text-red-200")}>{value}</div>
+      <div className={cn("mt-2 text-2xl font-semibold", tone === "good" && "text-emerald-800", tone === "warn" && "text-amber-800", tone === "bad" && "text-red-800")}>{value}</div>
     </div>
   );
 }
@@ -3482,6 +3888,123 @@ function evidenceCoverageTone(stats: { total: number; present: number; missing: 
   return "bad";
 }
 
+function findKnowledgeSourceForProject(sources: KnowledgeSource[], project: Project | null) {
+  if (!project) return null;
+  const projectRoot = comparablePath(project.rootPath);
+  return sources.find((source) => comparablePath(source.rootPath) === projectRoot) ?? null;
+}
+
+function comparablePath(path: string) {
+  return path.replaceAll("\\", "/").replace(/\/+$/, "").trim().toLowerCase();
+}
+
+function pathSummary(path: string) {
+  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 2) return normalized || "-";
+  return `${parts.at(-2)}/${parts.at(-1)}`;
+}
+
+function readIndexState(projectId: number | null): SavedIndexState | null {
+  if (!projectId) return null;
+  const state = readLocalState<Record<string, SavedIndexState>>("devcontext.knowledgeIndexState.v1", {});
+  return state[String(projectId)] ?? null;
+}
+
+function writeIndexState(next: SavedIndexState) {
+  const state = readLocalState<Record<string, SavedIndexState>>("devcontext.knowledgeIndexState.v1", {});
+  state[String(next.projectId)] = next;
+  localStorage.setItem("devcontext.knowledgeIndexState.v1", JSON.stringify(state));
+}
+
+function readLocalState<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function clearProjectLocalState(projectId: number) {
+  const indexState = readLocalState<Record<string, SavedIndexState>>("devcontext.knowledgeIndexState.v1", {});
+  delete indexState[String(projectId)];
+  localStorage.setItem("devcontext.knowledgeIndexState.v1", JSON.stringify(indexState));
+  const legacyContextState = readLocalState<Record<string, unknown>>("devcontext.contextGenerationState.v1", {});
+  delete legacyContextState[String(projectId)];
+  localStorage.setItem("devcontext.contextGenerationState.v1", JSON.stringify(legacyContextState));
+}
+
+function resolveIndexState(project: Project | null, source: KnowledgeSource | null, saved: SavedIndexState | null): SavedIndexState {
+  if (!project) return { projectId: 0, status: "idle" };
+  if (source?.status === "indexed") {
+    return {
+      projectId: project.id,
+      sourceId: source.id,
+      status: "completed",
+      completedAt: source.updatedAt,
+    };
+  }
+  if (saved?.projectId === project.id) return saved;
+  return { projectId: project.id, sourceId: source?.id, status: "idle" };
+}
+
+function operationBadge(status: OperationStatus): BadgeVariant {
+  if (status === "completed") return "success";
+  if (status === "failed") return "danger";
+  if (status === "running" || status === "queued") return "warning";
+  return "secondary";
+}
+
+function operationLabel(status: OperationStatus) {
+  const labels: Record<OperationStatus, string> = {
+    idle: "未开始",
+    queued: "排队中",
+    running: "进行中",
+    completed: "已完成",
+    failed: "失败",
+  };
+  return labels[status];
+}
+
+function indexStatusText(state: SavedIndexState, source: KnowledgeSource | null) {
+  if (state.status === "completed") {
+    return source?.updatedAt ? `索引已完成，最后更新时间 ${formatTime(source.updatedAt)}。` : "索引已完成。";
+  }
+  if (state.status === "running" || state.status === "queued") return "正在建立索引，刷新页面后会继续显示进行中状态。";
+  if (state.status === "failed") return state.error ?? "索引失败，可重试。";
+  return "未建立索引。为当前项目建立可检索的源码、配置、SQL、测试、报告和文档索引。";
+}
+
+function indexStatusMeta(state: SavedIndexState, source: KnowledgeSource | null) {
+  if (state.status === "completed") {
+    if (typeof state.documentsIndexed === "number" || typeof state.chunksIndexed === "number") {
+      return `${state.documentsIndexed ?? "-"} docs · ${state.chunksIndexed ?? "-"} chunks`;
+    }
+    return source?.updatedAt ? formatTime(source.updatedAt) : "ready";
+  }
+  if (state.status === "running" || state.status === "queued") return state.startedAt ? `started ${formatTime(state.startedAt)}` : "running";
+  if (state.status === "failed") return state.failedAt ? formatTime(state.failedAt) : "retry";
+  return source ? source.status ?? "created" : "no source";
+}
+
+function evidenceEvaluationBadge(evaluation: EvidenceEvaluation): BadgeVariant {
+  if (evaluation.noAnswerRequired || !evaluation.sufficient) return "warning";
+  if (evaluation.status === "sufficient" || evaluation.answerGuardDecision === "answer_allowed") return "success";
+  return "secondary";
+}
+
+function evidenceEvaluationLabel(evaluation: EvidenceEvaluation) {
+  if (evaluation.noAnswerRequired) return "no answer required";
+  if (!evaluation.sufficient) return "insufficient evidence";
+  return "evidence checked";
+}
+
+function evidenceEvaluationToneClass(evaluation: EvidenceEvaluation) {
+  if (evaluation.noAnswerRequired || !evaluation.sufficient) return "border-amber-700/20 bg-amber-600/10";
+  return "border-emerald-700/20 bg-emerald-700/8";
+}
+
 function qualityMeta(level: string): {
   label: string;
   description: string;
@@ -3495,7 +4018,7 @@ function qualityMeta(level: string): {
       description: "生成文档和人工文档较完整，可帮助概览项目，但实现结论仍应优先查看原始证据。",
       badge: "success",
       icon: CheckCircle2,
-      iconClass: "border-emerald-400/25 bg-emerald-400/10 text-emerald-200",
+      iconClass: "border-emerald-400/25 bg-emerald-400/10 text-emerald-800",
     };
   }
   if (level === "medium") {
@@ -3504,7 +4027,7 @@ function qualityMeta(level: string): {
       description: "辅助文档可用，但仍有缺失或 TODO。适合做概览，关键结论需要回到源码、配置、SQL、测试或报告确认。",
       badge: "warning",
       icon: ShieldCheck,
-      iconClass: "border-amber-400/25 bg-amber-400/10 text-amber-200",
+      iconClass: "border-amber-400/25 bg-amber-400/10 text-amber-800",
     };
   }
   return {
@@ -3512,7 +4035,7 @@ function qualityMeta(level: string): {
     description: "辅助文档还没有被确认。请优先查看上方原始证据覆盖，再决定是否补充 `.ai` 文档。",
     badge: "danger",
     icon: AlertTriangle,
-    iconClass: "border-red-400/25 bg-red-400/10 text-red-200",
+    iconClass: "border-red-400/25 bg-red-400/10 text-red-800",
   };
 }
 
@@ -3692,6 +4215,11 @@ function lines(value: string) {
 function round(value?: number) {
   if (typeof value !== "number") return "-";
   return Math.round(value * 1000) / 1000;
+}
+
+function mutationErrorMessage(error: unknown) {
+  if (!error) return null;
+  return error instanceof Error ? error.message : "请求失败，请确认后端接口可用。";
 }
 
 export default App;

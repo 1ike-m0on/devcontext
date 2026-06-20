@@ -337,6 +337,37 @@ export type KnowledgeQueryPlan = {
   noAnswerPolicy: string;
 };
 
+export type EvidenceCitationAssessment = {
+  citationIndex: number;
+  sourcePath: string;
+  evidenceTypes: KnowledgeEvidenceType[];
+  sourceReliabilities: string[];
+  supportsRequiredEvidence: boolean;
+  supportsPreferredEvidence: boolean;
+  sourceKinds: string[];
+  weakEvidence: boolean;
+  weaknessReasons: string[];
+  scoreReasons: string[];
+};
+
+export type EvidenceEvaluation = {
+  status: string;
+  sufficient: boolean;
+  noAnswerRequired: boolean;
+  requiredEvidenceTypes: KnowledgeEvidenceType[];
+  matchedRequiredEvidenceTypes: KnowledgeEvidenceType[];
+  missingRequiredEvidenceTypes: KnowledgeEvidenceType[];
+  preferredEvidenceTypes: KnowledgeEvidenceType[];
+  matchedPreferredEvidenceTypes: KnowledgeEvidenceType[];
+  missingPreferredEvidenceTypes: KnowledgeEvidenceType[];
+  observedEvidenceTypes: KnowledgeEvidenceType[];
+  citationAssessments: EvidenceCitationAssessment[];
+  reasons: string[];
+  answerGuardDecision: string;
+  weakEvidenceTypes: KnowledgeEvidenceType[];
+  weakEvidenceReasons: string[];
+};
+
 export type DecisionSearchResult = {
   decision: DecisionCard;
   score: number;
@@ -390,6 +421,7 @@ export type RagAnswerResult = {
   query: string;
   rewrittenQuery: string;
   queryPlan?: KnowledgeQueryPlan;
+  evidenceEvaluation?: EvidenceEvaluation | null;
   answer: string;
   citations: KnowledgeSearchResult[];
 };
