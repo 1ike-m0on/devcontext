@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.config.ts --configLoader runner --host 0.0.0.0 --port 5173",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build --config vite.config.ts --configLoader runner",
     "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
@@ -18,6 +18,8 @@
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
